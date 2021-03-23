@@ -39,9 +39,13 @@ File location: `os.path.join(os.environ['HOME'], ".jobqueue.json")`
 
 ### JobQueue module
 
-The best interface is using the `JobQueue` module.  Please see the [test case](test/test_interface.py) for details on using this interface.
+The best interface is using the `JobQueue` module.  Please see the [example notebook](notebooks/example.ipynb) or [test case](test/test_interface.py) for details on using this interface.
 
 ### The `jq` command line tool
+
+You can check the status of your queue by typing the following on the command line:
+
+        jq list <NAME_OF_DATABASE>
 
 
 
