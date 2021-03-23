@@ -1,0 +1,5 @@
+jobqueue.egg-info
+.pytest_cach
+.ipynb_checkpoints
+__pycache__
+env.sh

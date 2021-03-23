@@ -1,0 +1,10 @@
+name: jobsqueue-pg
+dependencies:
+- python=3.7
+- jupyter
+- pip
+- pip:
+  - pytest
+  - psycopg2-binary
+  - pandas
+
