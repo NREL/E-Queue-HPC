@@ -4,11 +4,11 @@
 
 Install this module using `pip`:
 
-    pip install --editable=git+https://github.nrel.gov/mlunacek/jobqueue@master#egg=jobqueue
+    pip install --editable=git+https://github.nrel.gov/mlunacek/jobqueue-pg@master#egg=jobqueue-pg
 
 We recommend including this as a pip dependency in your `environment.yml` conda file.  For example:
 
-    "--editable=git+https://github.nrel.gov/mlunacek/jobqueue@master#egg=jobqueue"
+    "--editable=git+https://github.nrel.gov/mlunacek/jobqueue-pg@master#egg=jobqueue-pg"
 
 
 ## Using the `jobqueue`
