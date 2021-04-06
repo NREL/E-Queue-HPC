@@ -8,6 +8,7 @@ class Message:
         self._credentials = credentials 
         self._uuid = result[0]
         self._config = result[2]
+        self._priority = result[8]
         
     @property
     def config(self):
@@ -17,6 +18,11 @@ class Message:
     def uuid(self):
         return self._uuid
     
+    @property
+    def priority(self):
+        return self._priority
+
+
     def mark_complete(self):
         functions.mark_job_as_done(self._credentials, self._uuid)
 
@@ -59,8 +65,8 @@ class JobQueue:
             return Message(self._credentials, res)
         return None
 
-    def add_job(self, job):
-        functions.add_job(self._credentials, self._queue, job)
+    def add_job(self, job, priority=None):
+        functions.add_job(self._credentials, self._queue, job, priority=priority)
 
 
 

@@ -62,17 +62,20 @@ def create_table(credentials):
     connection = psycopg2.connect(**credentials)  
     cmd = """
     CREATE TABLE IF NOT EXISTS {}(
-        UUID        VARCHAR NOT NULL PRIMARY KEY,
-        USERNAME    VARCHAR NOT NULL,
-        CONFIG      JSON    NOT NULL,
-        GROUPNAME   VARCHAR,
-        HOSTNAME    VARCHAR,
-        STATUS      VARCHAR,
-        WORKER      VARCHAR,
-        creation_time    timestamp,
-        start_time  timestamp,
-        end_time    timestamp,
-        aquire      float
+        UUID            VARCHAR NOT NULL PRIMARY KEY,
+        USERNAME        VARCHAR NOT NULL,
+        CONFIG          JSON    NOT NULL,
+        GROUPNAME           VARCHAR,
+        HOST            VARCHAR,
+        STATUS          VARCHAR,
+        WORKER          VARCHAR,
+        creation_time   timestamp,
+        priority        VARCHAR,
+        start_time      timestamp,
+        end_time        timestamp,
+        depth           integer,
+        wall_time       float,
+        aquire          float
     );
     """
     try:
@@ -99,17 +102,20 @@ def recreate_table(credentials):
     cmd = """
     DROP TABLE IF EXISTS {};
     CREATE TABLE {}(
-        UUID        VARCHAR NOT NULL PRIMARY KEY,
-        USERNAME    VARCHAR NOT NULL,
-        CONFIG      JSON    NOT NULL,
-        GROUPNAME   VARCHAR,
-        HOSTNAME    VARCHAR,
-        STATUS      VARCHAR,
-        WORKER      VARCHAR,
-        creation_time    timestamp,
-        start_time  timestamp,
-        end_time    timestamp,
-        aquire      float
+        UUID            VARCHAR NOT NULL PRIMARY KEY,
+        USERNAME        VARCHAR NOT NULL,
+        CONFIG          JSON    NOT NULL,
+        GROUPNAME           VARCHAR,
+        HOST            VARCHAR,
+        STATUS          VARCHAR,
+        WORKER          VARCHAR,
+        creation_time   timestamp,
+        priority        VARCHAR,
+        start_time      timestamp,
+        end_time        timestamp,
+        depth           integer,
+        wall_time       float,
+        aquire          float
     );
     """
     try:
@@ -127,7 +133,7 @@ def recreate_table(credentials):
             cursor.close()    
     connection.close()
 
-def add_job(credentials, group, job):
+def add_job(credentials, group, job, priority=None):
     """ Adds a job (dictionary) to the database jobqueue table.
         Input:  credentials
                 group: str, name of "queue" in the database
@@ -141,13 +147,16 @@ def add_job(credentials, group, job):
         job_id = job.get('uuid', str(uuid.uuid4()))
         user = os.environ.get('USER')
         now = datetime.datetime.now()
+        if priority is None:
+            priority = str(now)
+     
         cmd = """
             INSERT INTO {}(uuid, username, config, groupname, 
-                                 hostname, status, worker, creation_time) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
+                                 host, status, worker, creation_time, priority) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         
-        args = (job_id, user, json.dumps(job), group, None, None, None, now)
+        args = (job_id, user, json.dumps(job), group, None, None, None, now, priority)
         
         cursor = connection.cursor()
         cursor.execute(cmd, args)
@@ -182,6 +191,7 @@ def fetch_job(credentials, group, worker=None):
                           FROM {} 
                           WHERE status IS NULL 
                                 and groupname = %s
+                          ORDER BY priority
                           LIMIT 1 FOR UPDATE)
             RETURNING *       
             """
@@ -204,7 +214,7 @@ def fetch_job(credentials, group, worker=None):
         cmd = """
             UPDATE {}
             SET aquire = %s,
-                hostname = %s,
+                host = %s,
                 worker = %s,
                 start_time = %s
             WHERE uuid = %s     

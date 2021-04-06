@@ -14,7 +14,7 @@ def test_interface():
     # pass a uuid if you'd like.
     jq.add_job({'job': 1, 'uuid': str(uuid.uuid4()), 'a_list': [1,2,4]})
     jq.add_job({'job': 1, 'a_list': [1,2,4]})
-    jq.add_job({'job': 1, 'a_list': [1,2,4]})
+    jq.add_job({'job': 1, 'a_list': [1,2,4]}, priority=1)
     assert jq.messages == 3
 
     # 2. Run jobs
@@ -22,7 +22,9 @@ def test_interface():
     message = jq.get_message()
     assert jq.messages == 2
 
+
     print(message.uuid)
+    print(message.priority)
     print(message.config)
     
     # mark job as finished

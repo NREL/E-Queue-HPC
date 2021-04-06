@@ -2,6 +2,7 @@
 from jobqueue.functions import create_table
 import os
 import json
+import time
 
 import jobqueue
 
@@ -13,7 +14,7 @@ def test_functions():
     # Create table
     credentials = databases["dmp"]
     credentials['table_name'] = "test_jobqueue"
-    jobqueue.functions.create_table(credentials)
+    jobqueue.functions.recreate_table(credentials)
     jobqueue.functions.clear_table(credentials)
 
     df = jobqueue.functions.get_dataframe(credentials)
@@ -28,11 +29,16 @@ def test_functions():
     assert len(df) == 3
 
     # Add two jobs to group "test2"
-    jobqueue.functions.add_job(credentials, "test2", {'id': 1})
-    jobqueue.functions.add_job(credentials, "test2", {'id': 2})
+    jobqueue.functions.add_job(credentials, "test2", {'id': 1}, priority=2)
+    jobqueue.functions.add_job(credentials, "test2", {'id': 2}, priority=1) # lowest
+    jobqueue.functions.add_job(credentials, "test2", {'id': 3}, priority=3)
     df = jobqueue.functions.get_dataframe(credentials)
-    assert len(df) == 5
+    assert len(df) == 6
 
+    # fetch jobs from "test2" with workers
+    res0 = jobqueue.functions.fetch_job(credentials, "test2")    
+    assert res0[2]['id']==2
+  
     # fetch jobs from "test" with workers
     res0 = jobqueue.functions.fetch_job(credentials, "test")    
     res1 = jobqueue.functions.fetch_job(credentials, "test", worker=1)    

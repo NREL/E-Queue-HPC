@@ -47,5 +47,23 @@ You can check the status of your queue by typing the following on the command li
 
         jq list <NAME_OF_DATABASE>
 
+## Changes
+
+group
+host
+priority (int <- timestamp), default submission_time
+
+- When you pull job, oldest job based on priority
+- current_time >= priority
+- status == working -> priority = Null
+
+
+
+job_name (uuid, NUll ok)
+depth 0 (auto increment, NUll ok)
+depth 1
+
+
+index on group, priority
 
 
