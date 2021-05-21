@@ -22,7 +22,6 @@ class Message:
     def priority(self):
         return self._priority
 
-
     def mark_complete(self):
         functions.mark_job_as_done(self._credentials, self._uuid)
 
@@ -68,6 +67,8 @@ class JobQueue:
     def add_job(self, job, priority=None):
         functions.add_job(self._credentials, self._queue, job, priority=priority)
 
+    def reset_incomplete_jobs(self, interval='0 hours'):
+        functions.reset_incomplete_jobs(self._credentials, self._queue, interval=interval)
 
 
     # @property
