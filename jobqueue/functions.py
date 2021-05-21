@@ -340,8 +340,8 @@ def get_dataframe(credentials):
     return df
 
 def get_messages(credentials, group):
-    """ Returns the entire table as a dataframe.
-    Input: credentials
+    """ Returns the count of open jobs for a given group.
+    Input: credentials, group
     Output: int, number of open jobs
     """
     table_name, credentials = get_table_name(credentials)
@@ -366,4 +366,45 @@ def get_messages(credentials, group):
     finally:
         if connection:
             cursor.close()
-            connection.close()   
+            connection.close() 
+
+def reset_incomplete_jobs(credentials, group, interval='0 hours'):
+    """ Mark all incomplete jobs in a given group started more than {interval} ago as open.
+
+        Input:  credentials
+                group, str: the group name
+                interval, str: Postgres interval string specifying time from now, before which jobs will be reset
+
+        Output: None
+    """
+
+    cmd = """
+        UPDATE {}
+        SET status = null,
+            start_time = null,
+            host = null,
+            aquire = null
+        WHERE groupname = %s
+            and status = 'running'
+            and start_time < current_timestamp - interval %s;
+        """
+    table_name, credentials = get_table_name(credentials)
+    connection = psycopg2.connect(**credentials) 
+    now = datetime.datetime.now()
+    
+    try:
+        cursor = connection.cursor()
+        data = [group, interval]
+        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
+        cursor.execute(cmd, data)
+        connection.commit()
+        cursor.close()
+    
+    except (Exception, psycopg2.Error) as error:
+        print("Error", error)
+        cursor.close()
+        return None
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()  
