@@ -30,6 +30,30 @@ import time
 import socket
 
 
+def execute_database_command(credentials, execution_function):
+    """ Executes a function inside the scope of a database cursor, and cleans up and catches database exceptions while
+        executing that function.
+        Input: credentials
+               execution_function - function to which the cursor is passed
+        Output: None
+    """
+    table_name, credentials = get_table_name(credentials)
+    connection = psycopg2.connect(**credentials)
+
+    cursor = None
+    try:
+        cursor = connection.cursor()
+        execution_function(cursor)
+        connection.commit()
+        cursor.close()
+    except (Exception, psycopg2.Error) as error:
+        print("Error", error)
+    finally:
+        if connection and cursor is not None:
+            cursor.close()
+    connection.close()
+
+
 def get_table_name(credentials):
     """ The input credentials may contain a table_name.  This function
         returns the table name and a workable version of credentials.
@@ -46,12 +70,15 @@ def version(credentials):
         Input: credentials
         Output: str with version information
     """
-    connection = psycopg2.connect(**credentials)
-    cursor = connection.cursor()
-    cursor.execute("SELECT version();")
-    record = cursor.fetchone()
-    cursor.close()
-    connection.close()
+
+    record = None
+
+    def command(cursor):
+        nonlocal record
+        cursor.execute("SELECT version();")
+        record = cursor.fetchone()
+
+    execute_database_command(credentials, command)
     return f"You are connected to - {record}"
 
 
@@ -59,7 +86,6 @@ def create_table(credentials):
     """ Creates the table if it does not exists
         Input: credentials
         Output: None
-
     """
     recreate_table(credentials, drop_table=False)
 
@@ -70,10 +96,8 @@ def recreate_table(credentials, drop_table=True):
         Output: None
     """
     table_name, credentials = get_table_name(credentials)
-    connection = psycopg2.connect(**credentials)
 
-    try:
-        cursor = connection.cursor()
+    def command(cursor):
         if drop_table:
             cursor.execute(sql.SQL("DROP TABLE IF EXISTS {};").format(sql.Identifier(table_name)))
 
@@ -105,14 +129,8 @@ def recreate_table(credentials, drop_table=True):
                                   sql.Identifier(table_name),
                                   )
         cursor.execute(cmd)
-        connection.commit()
-        cursor.close()
-    except (Exception, psycopg2.Error) as error:
-        print("Error", error)
-    finally:
-        if connection:
-            cursor.close()
-    connection.close()
+
+    execute_database_command(credentials, command)
 
 
 def add_job(credentials, group, job, priority=None):
@@ -123,35 +141,23 @@ def add_job(credentials, group, job, priority=None):
         Output: None
     """
     table_name, credentials = get_table_name(credentials)
-    connection = psycopg2.connect(**credentials)
-    try:
 
+    def command(cursor):
+        nonlocal priority
         job_id = job.get('uuid', str(uuid.uuid4()))
         user = os.environ.get('USER')
         now = datetime.datetime.now()
         if priority is None:
             priority = str(now)
 
-        cmd = """
-            INSERT INTO {}(uuid, username, config, groupname, 
-                                 host, status, worker, creation_time, priority) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
-        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-
+        cmd = sql.SQL("""
+                    INSERT INTO {}(uuid, username, config, groupname, 
+                                         host, status, worker, creation_time, priority) 
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""").format(sql.Identifier(table_name))
         args = (job_id, user, json.dumps(job), group, None, None, None, now, priority)
-
-        cursor = connection.cursor()
         cursor.execute(cmd, args)
-        connection.commit()
 
-        cursor.close()
-        connection.close()
-    except (Exception, psycopg2.Error) as error:
-        print("Error", error)
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
+    execute_database_command(credentials, command)
 
 
 def fetch_job(credentials, group, worker=None):
@@ -165,28 +171,27 @@ def fetch_job(credentials, group, worker=None):
         Output: A job record from jobqueue table
     """
     table_name, credentials = get_table_name(credentials)
-    tic = time.time()
-    cmd = """
-            UPDATE {}
-            SET status = 'running'
-            WHERE uuid = (SELECT uuid 
-                          FROM {} 
-                          WHERE status IS NULL  
-                            AND groupname = %s
-                          ORDER BY priority ASC
-                          LIMIT 1 FOR UPDATE)
-            RETURNING *       
-            """
-    connection = psycopg2.connect(**credentials)
-    try:
-        cursor = connection.cursor()
+
+    def command(cursor):
+        tic = time.time()
+        cmd = """
+                    UPDATE {}
+                    SET status = 'running'
+                    WHERE uuid = (SELECT uuid 
+                                  FROM {} 
+                                  WHERE status IS NULL  
+                                    AND groupname = %s
+                                  ORDER BY priority ASC
+                                  LIMIT 1 FOR UPDATE)
+                    RETURNING *       
+                    """
         data = [group]
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name),
                                   sql.Identifier(table_name))
         cursor.execute(cmd, data)
         record = cursor.fetchone()
-        connection.commit()
-        cursor.close()
+        # connection.commit()
+        # cursor.close()
 
         # update record
         aquire = time.time() - tic
@@ -194,29 +199,45 @@ def fetch_job(credentials, group, worker=None):
         start_time = datetime.datetime.now()
         uuid = record[0]
         cmd = """
-            UPDATE {}
-            SET aquire = %s,
-                host = %s,
-                worker = %s,
-                start_time = %s
-            WHERE uuid = %s     
-            """
+                    UPDATE {}
+                    SET aquire = %s,
+                        host = %s,
+                        worker = %s,
+                        start_time = %s,
+                        update_time = %s
+                    WHERE uuid = %s     
+                    """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        data = [aquire, hostname, worker, start_time, uuid]
-        cursor = connection.cursor()
+        data = [aquire, hostname, worker, start_time, start_time, uuid]
         cursor.execute(cmd, data)
-        connection.commit()
-        cursor.close()
 
-        return record
-    except (Exception, psycopg2.Error) as error:
-        print("Error", error)
-        cursor.close()
-        return None
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
+    execute_database_command(credentials, command)
+
+
+def update_job_status(credentials, uuid):
+    """ When a job is finished, this function will mark the status as done.
+
+        Input:  credentials
+                uuid, str: the id of the job in the table
+
+        Output: None
+    """
+
+    table_name, credentials = get_table_name(credentials)
+
+    def command(cursor):
+        nonlocal table_name
+        cmd = """
+                UPDATE {}
+                    update_time = %s
+                WHERE uuid = %s
+                """
+        now = datetime.datetime.now()
+        data = [now, uuid]
+        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
+        cursor.execute(cmd, data)
+
+    execute_database_command(credentials, command)
 
 
 def mark_job_as_done(credentials, uuid):
@@ -228,32 +249,23 @@ def mark_job_as_done(credentials, uuid):
         Output: None
     """
 
-    cmd = """
-        UPDATE {}
-        SET status = 'done',
-            end_time = %s
-        WHERE uuid = %s
-        """
     table_name, credentials = get_table_name(credentials)
-    connection = psycopg2.connect(**credentials)
-    now = datetime.datetime.now()
 
-    try:
-        cursor = connection.cursor()
-        data = [now, uuid]
+    def command(cursor):
+        nonlocal table_name
+        cmd = """
+                UPDATE {}
+                SET status = 'done',
+                    update_time = %s,
+                    end_time = %s
+                WHERE uuid = %s
+                """
+        now = datetime.datetime.now()
+        data = [now, now, uuid]
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         cursor.execute(cmd, data)
-        connection.commit()
-        cursor.close()
 
-    except (Exception, psycopg2.Error) as error:
-        print("Error", error)
-        cursor.close()
-        return None
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
+    execute_database_command(credentials, command)
 
 
 def clear_queue(credentials, groupname):
@@ -263,26 +275,19 @@ def clear_queue(credentials, groupname):
                 groupname, str: Name of group (queue)
         Output: None
     """
+
     table_name, credentials = get_table_name(credentials)
-    connection = psycopg2.connect(**credentials)
-    try:
+
+    def command(cursor):
+        nonlocal table_name
         cmd = """
-            DELETE FROM {} WHERE groupname = %s;    
-            """
+                   DELETE FROM {} WHERE groupname = %s;    
+                   """
         data = [groupname]
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        cursor = connection.cursor()
         cursor.execute(cmd, data)
-        connection.commit()
 
-    except (Exception, psycopg2.Error) as error:
-        print("Error", error)
-        cursor.close()
-        return None
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
+    execute_database_command(credentials, command)
 
 
 def clear_table(credentials):
@@ -291,25 +296,18 @@ def clear_table(credentials):
         Input: credentials
         Output: None
     """
-    table_name, credentials = get_table_name(credentials)
-    connection = psycopg2.connect(**credentials)
-    try:
-        cmd = """
-            DELETE FROM {};    
-            """
-        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        cursor = connection.cursor()
-        cursor.execute(cmd)
-        connection.commit()
 
-    except (Exception, psycopg2.Error) as error:
-        print("Error", error)
-        cursor.close()
-        return None
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
+    table_name, credentials = get_table_name(credentials)
+
+    def command(cursor):
+        nonlocal table_name
+        cmd = """
+                    DELETE FROM {};    
+                    """
+        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
+        cursor.execute(cmd)
+
+    execute_database_command(credentials, command)
 
 
 def get_dataframe(credentials):
@@ -331,28 +329,23 @@ def get_messages(credentials, group):
     Output: int, number of open jobs
     """
     table_name, credentials = get_table_name(credentials)
-    connection = psycopg2.connect(**credentials)
-    try:
+
+    record = None
+
+    def command(cursor):
+        nonlocal table_name, record
         cmd = """
-            select count(*) from {} 
-            where groupname = %s and
-                  status is null;    
-            """
+                    select count(*) from {} 
+                    where groupname = %s and
+                          status is null;    
+                    """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         data = [group]
-        cursor = connection.cursor()
         cursor.execute(cmd, data)
         record = cursor.fetchone()
-        return record
 
-    except (Exception, psycopg2.Error) as error:
-        print("Error", error)
-        cursor.close()
-        return None
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
+    execute_database_command(credentials, command)
+    return record
 
 
 def reset_incomplete_jobs(credentials, group, interval='0 hours'):
@@ -364,34 +357,22 @@ def reset_incomplete_jobs(credentials, group, interval='0 hours'):
 
         Output: None
     """
-
-    cmd = """
-        UPDATE {}
-        SET status = null,
-            start_time = null,
-            host = null,
-            aquire = null
-        WHERE groupname = %s
-            and status = 'running'
-            and start_time < current_timestamp - interval %s;
-        """
     table_name, credentials = get_table_name(credentials)
-    connection = psycopg2.connect(**credentials)
-    now = datetime.datetime.now()
 
-    try:
-        cursor = connection.cursor()
+    def command(cursor):
+        nonlocal table_name
+        cmd = """
+                UPDATE {}
+                SET status = null,
+                    start_time = null,
+                    host = null,
+                    aquire = null
+                WHERE groupname = %s
+                    and status = 'running'
+                    and start_time < current_timestamp - interval %s;
+                """
         data = [group, interval]
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         cursor.execute(cmd, data)
-        connection.commit()
-        cursor.close()
 
-    except (Exception, psycopg2.Error) as error:
-        print("Error", error)
-        cursor.close()
-        return None
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
+    execute_database_command(credentials, command)
