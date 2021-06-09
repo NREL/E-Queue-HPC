@@ -369,10 +369,11 @@ def reset_incomplete_jobs(credentials, group, interval='0 hours'):
                     aquire = null
                 WHERE groupname = %s
                     and status = 'running'
-                    and start_time < current_timestamp - interval %s;
+                    and update_time < current_timestamp - interval %s;
                 """
         data = [group, interval]
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         cursor.execute(cmd, data)
 
     execute_database_command(credentials, command)
+
