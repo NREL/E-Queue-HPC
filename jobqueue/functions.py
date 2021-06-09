@@ -215,7 +215,8 @@ def fetch_job(credentials, group, worker=None):
 
 
 def update_job_status(credentials, uuid):
-    """ When a job is finished, this function will mark the status as done.
+    """ While a job is being worked on, the worker can periodically let the queue know it is still working on the
+        job (instead of crashed or frozen).
 
         Input:  credentials
                 uuid, str: the id of the job in the table
