@@ -146,15 +146,14 @@ def add_job(credentials, group, job, priority=None):
         nonlocal priority
         job_id = job.get('uuid', str(uuid.uuid4()))
         user = os.environ.get('USER')
-        now = datetime.datetime.now()
         if priority is None:
-            priority = str(now)
+            priority = str(datetime.datetime.now())
 
         cmd = sql.SQL("""
                     INSERT INTO {}(uuid, username, config, groupname, 
                                          host, status, worker, creation_time, priority) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""").format(sql.Identifier(table_name))
-        args = (job_id, user, json.dumps(job), group, None, None, None, now, priority)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, current_timestamp, %s)""").format(sql.Identifier(table_name))
+        args = (job_id, user, json.dumps(job), group, None, None, None, priority)
         cursor.execute(cmd, args)
 
     execute_database_command(credentials, command)
@@ -196,19 +195,18 @@ def fetch_job(credentials, group, worker=None):
         # update record
         aquire = time.time() - tic
         hostname = socket.gethostname()
-        start_time = datetime.datetime.now()
         uuid = record[0]
         cmd = """
                     UPDATE {}
                     SET aquire = %s,
                         host = %s,
                         worker = %s,
-                        start_time = %s,
-                        update_time = %s
+                        start_time = current_timestamp,
+                        update_time = current_timestamp
                     WHERE uuid = %s     
                     """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        data = [aquire, hostname, worker, start_time, start_time, uuid]
+        data = [aquire, hostname, worker, uuid]
         cursor.execute(cmd, data)
 
     execute_database_command(credentials, command)
@@ -228,15 +226,13 @@ def update_job_status(credentials, uuid):
 
     def command(cursor):
         nonlocal table_name
-        cmd = """
-                UPDATE {}
-                    update_time = %s
-                WHERE uuid = %s
-                """
-        now = datetime.datetime.now()
-        data = [now, uuid]
-        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        cursor.execute(cmd, data)
+        cmd = sql.SQL(
+            """
+            UPDATE {}
+            SET update_time = current_timestamp
+            WHERE uuid = %s
+            """).format(sql.Identifier(table_name))
+        cursor.execute(cmd, [uuid])
 
     execute_database_command(credentials, command)
 
@@ -254,17 +250,14 @@ def mark_job_as_done(credentials, uuid):
 
     def command(cursor):
         nonlocal table_name
-        cmd = """
+        cmd = sql.SQL("""
                 UPDATE {}
                 SET status = 'done',
-                    update_time = %s,
-                    end_time = %s
+                    update_time = current_timestamp,
+                    end_time = current_timestamp 
                 WHERE uuid = %s
-                """
-        now = datetime.datetime.now()
-        data = [now, now, uuid]
-        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        cursor.execute(cmd, data)
+                """).format(sql.Identifier(table_name))
+        cursor.execute(cmd, [uuid])
 
     execute_database_command(credentials, command)
 
@@ -377,4 +370,3 @@ def reset_incomplete_jobs(credentials, group, interval='0 hours'):
         cursor.execute(cmd, data)
 
     execute_database_command(credentials, command)
-
