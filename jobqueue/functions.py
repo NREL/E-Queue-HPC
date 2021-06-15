@@ -30,14 +30,13 @@ import time
 import socket
 
 
-def execute_database_command(credentials, execution_function) -> any:
+def execute_database_command(credentials: {str, any}, execution_function: Callable[[any], any]) -> any:
     """ Executes a function inside the scope of a database cursor, and cleans up and catches database exceptions while
         executing that function.
         Input: credentials
                execution_function - function to which the cursor is passed
-        Output: None
+        Output: return value of execution_function() call
     """
-    table_name, credentials = get_table_name(credentials)
     connection = psycopg2.connect(**credentials)
 
     cursor = None
@@ -49,25 +48,16 @@ def execute_database_command(credentials, execution_function) -> any:
         cursor.close()
     except (Exception, psycopg2.Error) as error:
         print("Error", error)
+        raise error
     finally:
-        if connection and cursor is not None:
-            cursor.close()
-    connection.close()
+        if connection is not None:
+            if cursor is not None:
+                cursor.close()
+            connection.close()
     return result
 
 
-def get_table_name(credentials):
-    """ The input credentials may contain a table_name.  This function
-        returns the table name and a workable version of credentials.
-    """
-    tmp = copy.deepcopy(credentials)
-    table_name = tmp.get("table_name", "jobqueue")
-    if "table_name" in tmp.keys():
-        del tmp['table_name']
-    return table_name, tmp
-
-
-def version(credentials):
+def version(credentials: {str: any}):
     """ Returns the current version of Postgres.
         Input: credentials
         Output: str with version information
@@ -81,20 +71,17 @@ def version(credentials):
     return f"You are connected to - {record}"
 
 
-def create_table(credentials):
+def create_table(credentials: {str: any}, table_name: str):
     """ Creates the table if it does not exists
         Input: credentials
         Output: None
     """
-    recreate_table(credentials, drop_table=False)
+    recreate_table(credentials, table_name, drop_table=False)
 
 
-def recreate_table(credentials, drop_table=True):
+def recreate_table(credentials: {str: any}, table_name: str, drop_table: bool = True) -> None:
     """ Deletes and replaces or creates the current jobqueue table.
-        Input: credentials
-        Output: None
     """
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         if drop_table:
@@ -115,8 +102,7 @@ def recreate_table(credentials, drop_table=True):
             update_time     TIMESTAMP,
             end_time        TIMESTAMP,
             `depth`         INTEGER,
-            wall_time       FLOAT,
-            aquire          FLOAT,
+            wall_time       FLOAT
         );
         CREATE INDEX IF NOT EXISTS {} ON {} (groupname, priority ASC) WHERE status IS NULL;
         CREATE INDEX IF NOT EXISTS {} ON {} (groupname, status);
@@ -132,14 +118,19 @@ def recreate_table(credentials, drop_table=True):
     execute_database_command(credentials, command)
 
 
-def add_job(credentials, group, job, priority=None):
+def add_job(
+        credentials: {str: any},
+        table_name: str,
+        group: str,
+        job: dict,
+        priority: Optional[str] = None,
+) -> None:
     """ Adds a job (dictionary) to the database jobqueue table.
         Input:  credentials
                 group: str, name of "queue" in the database
                 job: dict, must be able to call json.dumps
         Output: None
     """
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         job_id = job.get('uuid', str(uuid.uuid4()))
@@ -157,17 +148,17 @@ def add_job(credentials, group, job, priority=None):
     execute_database_command(credentials, command)
 
 
-def fetch_job(credentials, group, worker=None):
+def fetch_job(credentials: {str: any}, table_name: str, group: str, worker: Optional[uuid] = None):
     """ Gets an available job from the group (queue, experiment, etc.).  An optional
         worker id can be assigned.  After the job is allocated to the function,
         several job characteristics are updated.
 
         Input:  credentials
+                table_name
                 group: str, name of groupname in table
-                worker: str, id for worker
+                worker: UUID, id for worker
         Output: A job record from jobqueue table
     """
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         tic = time.time()
@@ -194,17 +185,16 @@ def fetch_job(credentials, group, worker=None):
     return execute_database_command(credentials, command)
 
 
-def update_job_status(credentials, uuid):
+def update_job_status(credentials: {str: any}, table_name: str, uuid: UUID) -> None:
     """ While a job is being worked on, the worker can periodically let the queue know it is still working on the
         job (instead of crashed or frozen).
 
         Input:  credentials
+                table_name
                 uuid, str: the id of the job in the table
 
         Output: None
     """
-
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         cmd = sql.SQL(
@@ -213,21 +203,20 @@ def update_job_status(credentials, uuid):
             SET update_time = CURRENT_TIMESTAMP
             WHERE uuid = %s
             """).format(sql.Identifier(table_name))
-        cursor.execute(cmd, [uuid])
+        cursor.execute(cmd, [str(uuid)])
 
     execute_database_command(credentials, command)
 
 
-def mark_job_as_done(credentials, uuid):
+def mark_job_as_done(credentials: {str: any}, table_name: str, uuid: UUID) -> None:
     """ When a job is finished, this function will mark the status as done.
 
         Input:  credentials
+                table_name
                 uuid, str: the id of the job in the table
 
         Output: None
     """
-
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         cmd = sql.SQL("""
@@ -237,20 +226,19 @@ def mark_job_as_done(credentials, uuid):
                     end_time = CURRENT_TIMESTAMP 
                 WHERE uuid = %s
                 """).format(sql.Identifier(table_name))
-        cursor.execute(cmd, [uuid])
+        cursor.execute(cmd, [str(uuid)])
 
     execute_database_command(credentials, command)
 
 
-def clear_queue(credentials, groupname):
+def clear_queue(credentials: {str: any}, table_name: str, groupname: str) -> None:
     """ Clears all records for a given group.
 
         Input: credentials
+                table_name
                 groupname, str: Name of group (queue)
         Output: None
     """
-
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         cmd = """
@@ -263,14 +251,12 @@ def clear_queue(credentials, groupname):
     execute_database_command(credentials, command)
 
 
-def clear_table(credentials):
+def clear_table(credentials: {str: any}, table_name: str) -> None:
     """ Clears all records in the table.
-
         Input: credentials
+                table_name
         Output: None
     """
-
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         cursor.execute(sql.SQL('DELETE FROM {};').format(sql.Identifier(table_name)))
@@ -278,21 +264,21 @@ def clear_table(credentials):
     execute_database_command(credentials, command)
 
 
-def get_dataframe(credentials):
+def get_dataframe(credentials: {str: any}, table_name: str) -> pd.DataFrame:
     """ Returns the entire table as a dataframe.
         Input: credentials
+                table_name
         Output: pandas.DataFrame
     """
-    table_name, credentials = get_table_name(credentials)
     connection = psycopg2.connect(**credentials)
     cmd = sql.SQL('SELECT * FROM {}').format(sql.Identifier(table_name))
     df = pd.read_sql(cmd, con=connection)
     return df
 
 
-def get_messages(credentials, group):
+def get_messages(credentials: {str: any}, table_name: str, group: str) -> int:
     """ Returns the count of open jobs for a given group.
-    Input: credentials, group
+    Input: credentials, table_name, group
     Output: int, number of open jobs
     """
     table_name, credentials = get_table_name(credentials)
@@ -310,12 +296,11 @@ def get_messages(credentials, group):
     return execute_database_command(credentials, command)
 
 
-def get_message_counts(credentials, group):
+def get_message_counts(credentials: {str: any}, table_name: str, group: str) -> (int, int, int):
     """ Returns the count of open, pending, and completed jobs for a given group.
-   Input: credentials, group
+   Input: credentials, table_name, group
    Output: (num open, num pending, num completed)
    """
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         cursor.execute(sql.SQL("""
@@ -330,16 +315,16 @@ def get_message_counts(credentials, group):
     return records.get(None, 0), records.get(None, 'running'), records.get(None, 'done')
 
 
-def reset_incomplete_jobs(credentials, group, interval='0 hours'):
+def reset_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, interval='0 hours') -> None:
     """ Mark all incomplete jobs in a given group started more than {interval} ago as open.
 
         Input:  credentials
+                table_name
                 group, str: the group name
                 interval, str: Postgres interval string specifying time from now, before which jobs will be reset
 
         Output: None
     """
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         cmd = """
