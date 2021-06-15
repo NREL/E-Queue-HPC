@@ -148,7 +148,12 @@ def add_job(
     execute_database_command(credentials, command)
 
 
-def fetch_job(credentials: {str: any}, table_name: str, group: str, worker: Optional[uuid] = None):
+def fetch_job(
+        credentials: {str: any},
+        table_name: str,
+        group: str,
+        worker: Optional[uuid] = None,
+) -> any:
     """ Gets an available job from the group (queue, experiment, etc.).  An optional
         worker id can be assigned.  After the job is allocated to the function,
         several job characteristics are updated.

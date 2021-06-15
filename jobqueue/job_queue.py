@@ -7,31 +7,31 @@ from . import functions
 class Message:
 
     def __init__(self, credentials: {str: any}, table_name: str, result: list) -> None:
-        self._credentials = credentials
+        self._credentials: {str: any} = credentials
         self._table_name: str = table_name
         self._uuid: UUID = uuid.UUID(result[0])
-        self._config = result[2]
-        self._priority = result[8]
+        self._config: dict = result[2]
+        self._priority: str = result[8]
 
     @property
-    def config(self):
+    def config(self) -> {str: any}:
         return self._config
 
     @property
-    def uuid(self):
+    def uuid(self) -> UUID:
         return self._uuid
 
     @property
-    def priority(self):
+    def priority(self) -> str:
         return self._priority
 
-    def mark_complete(self):
+    def mark_complete(self) -> None:
         functions.mark_job_as_done(self._credentials, self._table_name, self._uuid)
 
 
 class JobQueue:
 
-    def __init__(self, database: str, queue: str, _table_name=None):
+    def __init__(self, database: str, queue: str, _table_name=None) -> None:
         """ Interface to the jobsque database table
             database: str, name of the key in your .jobsqueue.json file.
             queue: str, name of the queue you'd like to create or use.
@@ -56,49 +56,49 @@ class JobQueue:
         functions.create_table(self._credentials)
 
     @property
-    def messages(self):
+    def messages(self) -> int:
         res = functions.get_messages(self._credentials, self._table_name, self._queue)
         return res[0]
 
     @property
-    def message_counts(self):
+    def message_counts(self) -> (int, int, int):
         return functions.get_message_counts(self._credentials, self._table_name, self._queue)
 
-    def clear(self):
+    def clear(self) -> None:
         functions.clear_queue(self._credentials, self._table_name, self._queue)
 
-    def get_message(self, worker=None):
+    def get_message(self, worker=None) -> Optional[Message]:
         res = functions.fetch_job(self._credentials, self._table_name, self._queue, worker=worker)
-        if res is not None:
-            return Message(self._credentials, self._table_name, res)
-        return None
+        if res is None:
+            return None
+        return Message(self._credentials, self._table_name, res)
 
-    def add_job(self, job, priority=None):
+    def add_job(self, job, priority=None) -> None:
         functions.add_job(self._credentials, self._table_name, self._queue, job, priority=priority)
 
-    def reset_incomplete_jobs(self, interval='0 hours'):
+    def reset_incomplete_jobs(self, interval='4 hours') -> None:
         functions.reset_incomplete_jobs(self._credentials, self._table_name, self._queue, interval=interval)
 
-    # @property
-    # def messages(self):
-    #     res = [ x[1] for x in list_unprocessed(self._database) if x[0]==self._queue]
-    #     if len(res) > 0:
-    #         return res[0]
-    #     else:
-    #         return 0
+# @property
+# def messages(self):
+#     res = [ x[1] for x in list_unprocessed(self._database) if x[0]==self._queue]
+#     if len(res) > 0:
+#         return res[0]
+#     else:
+#         return 0
 
-    # @property
-    # def all_messages(self):
-    #     res = [ x[1] for x in list_all(self._database) if x[0]==self._queue]
-    #     if len(res) > 0:
-    #         return res[0]
-    #     else:
-    #         return 0
+# @property
+# def all_messages(self):
+#     res = [ x[1] for x in list_all(self._database) if x[0]==self._queue]
+#     if len(res) > 0:
+#         return res[0]
+#     else:
+#         return 0
 
-    # @property
-    # def average_time(self):
-    #     res = [ x[2] for x in list_time(self._database) if x[0]==self._queue]
-    #     if len(res) > 0:
-    #         return res[0]
-    #     else:
-    #         return 0
+# @property
+# def average_time(self):
+#     res = [ x[2] for x in list_time(self._database) if x[0]==self._queue]
+#     if len(res) > 0:
+#         return res[0]
+#     else:
+#         return 0
