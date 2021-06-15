@@ -114,7 +114,7 @@ def recreate_table(credentials, drop_table=True):
             start_time      TIMESTAMP,
             update_time     TIMESTAMP,
             end_time        TIMESTAMP,
-            `depth`          INTEGER,
+            `depth`         INTEGER,
             wall_time       FLOAT,
             aquire          FLOAT,
         );
@@ -150,7 +150,7 @@ def add_job(credentials, group, job, priority=None):
         cmd = sql.SQL("""
                     INSERT INTO {}(uuid, username, config, groupname, 
                                          host, status, worker, creation_time, priority) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, current_timestamp, %s)""").format(sql.Identifier(table_name))
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)""").format(sql.Identifier(table_name))
         args = (job_id, user, json.dumps(job), group, None, None, None, priority)
         cursor.execute(cmd, args)
 
@@ -176,13 +176,13 @@ def fetch_job(credentials, group, worker=None):
                             SET status = 'running'
                                 host = %s,
                                 worker = %s,
-                                start_time = current_timestamp,
-                                update_time = current_timestamp
+                                start_time = CURRENT_TIMESTAMP,
+                                update_time = CURRENT_TIMESTAMP
                             WHERE uuid = (SELECT uuid 
                                           FROM {} 
                                           WHERE status IS NULL  
                                             AND groupname = %s
-                                          ORDER BY priority ASC, random()
+                                          ORDER BY priority ASC, RANDOM()
                                           LIMIT 1 FOR UPDATE)
                             RETURNING *
                             """
@@ -210,7 +210,7 @@ def update_job_status(credentials, uuid):
         cmd = sql.SQL(
             """
             UPDATE {}
-            SET update_time = current_timestamp
+            SET update_time = CURRENT_TIMESTAMP
             WHERE uuid = %s
             """).format(sql.Identifier(table_name))
         cursor.execute(cmd, [uuid])
@@ -233,8 +233,8 @@ def mark_job_as_done(credentials, uuid):
         cmd = sql.SQL("""
                 UPDATE {}
                 SET status = 'done',
-                    update_time = current_timestamp,
-                    end_time = current_timestamp 
+                    update_time = CURRENT_TIMESTAMP,
+                    end_time = CURRENT_TIMESTAMP 
                 WHERE uuid = %s
                 """).format(sql.Identifier(table_name))
         cursor.execute(cmd, [uuid])
@@ -319,7 +319,7 @@ def get_message_counts(credentials, group):
 
     def command(cursor):
         cursor.execute(sql.SQL("""
-                        SELECT status, count(*) FROM {}
+                        SELECT status, COUNT(*) FROM {}
                         WHERE groupname = %s
                         GROUP BY status;
                        """).format(sql.Identifier(table_name)),
@@ -350,7 +350,7 @@ def reset_incomplete_jobs(credentials, group, interval='0 hours'):
                     aquire = null
                 WHERE groupname = %s
                     and status = 'running'
-                    and update_time < current_timestamp - interval %s;
+                    and update_time < CURRENT_TIMESTAMP - INTERVAL %s;
                 """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         cursor.execute(cmd, [group, interval])
