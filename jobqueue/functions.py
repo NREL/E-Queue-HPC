@@ -30,7 +30,7 @@ import time
 import socket
 
 
-def execute_database_command(credentials, execution_function):
+def execute_database_command(credentials, execution_function) -> any:
     """ Executes a function inside the scope of a database cursor, and cleans up and catches database exceptions while
         executing that function.
         Input: credentials
@@ -41,9 +41,10 @@ def execute_database_command(credentials, execution_function):
     connection = psycopg2.connect(**credentials)
 
     cursor = None
+    result = None
     try:
         cursor = connection.cursor()
-        execution_function(cursor)
+        result = execution_function(cursor)
         connection.commit()
         cursor.close()
     except (Exception, psycopg2.Error) as error:
@@ -52,6 +53,7 @@ def execute_database_command(credentials, execution_function):
         if connection and cursor is not None:
             cursor.close()
     connection.close()
+    return result
 
 
 def get_table_name(credentials):
@@ -71,14 +73,11 @@ def version(credentials):
         Output: str with version information
     """
 
-    record = None
-
     def command(cursor):
-        nonlocal record
         cursor.execute("SELECT version();")
-        record = cursor.fetchone()
+        return cursor.fetchone()
 
-    execute_database_command(credentials, command)
+    record = execute_database_command(credentials, command)
     return f"You are connected to - {record}"
 
 
@@ -103,21 +102,21 @@ def recreate_table(credentials, drop_table=True):
 
         cmd = """
         CREATE TABLE {} (
-            UUID            VARCHAR NOT NULL PRIMARY KEY,
-            USERNAME        VARCHAR NOT NULL,
-            CONFIG          JSON    NOT NULL,
-            GROUPNAME       VARCHAR,
-            HOST            VARCHAR,
-            STATUS          VARCHAR,
-            WORKER          VARCHAR,
-            creation_time   timestamp,
+            UUID            UUID NOT NULL PRIMARY KEY,
+            username        VARCHAR NOT NULL,
+            config          JSON    NOT NULL,
+            groupname       VARCHAR,
+            host            VARCHAR,
+            status          VARCHAR,
+            worker          UUID,
+            creation_time   TIMESTAMP,
             priority        VARCHAR,
-            start_time      timestamp,
-            update_time     timestamp,
-            end_time        timestamp,
-            depth           integer,
-            wall_time       float,
-            aquire          float,
+            start_time      TIMESTAMP,
+            update_time     TIMESTAMP,
+            end_time        TIMESTAMP,
+            `depth`          INTEGER,
+            wall_time       FLOAT,
+            aquire          FLOAT,
         );
         CREATE INDEX IF NOT EXISTS {} ON {} (groupname, priority ASC) WHERE status IS NULL;
         CREATE INDEX IF NOT EXISTS {} ON {} (groupname, status);
@@ -143,7 +142,6 @@ def add_job(credentials, group, job, priority=None):
     table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
-        nonlocal priority
         job_id = job.get('uuid', str(uuid.uuid4()))
         user = os.environ.get('USER')
         if priority is None:
@@ -174,42 +172,26 @@ def fetch_job(credentials, group, worker=None):
     def command(cursor):
         tic = time.time()
         cmd = """
-                    UPDATE {}
-                    SET status = 'running'
-                    WHERE uuid = (SELECT uuid 
-                                  FROM {} 
-                                  WHERE status IS NULL  
-                                    AND groupname = %s
-                                  ORDER BY priority ASC
-                                  LIMIT 1 FOR UPDATE)
-                    RETURNING *       
-                    """
-        data = [group]
+                            UPDATE {}
+                            SET status = 'running'
+                                host = %s,
+                                worker = %s,
+                                start_time = current_timestamp,
+                                update_time = current_timestamp
+                            WHERE uuid = (SELECT uuid 
+                                          FROM {} 
+                                          WHERE status IS NULL  
+                                            AND groupname = %s
+                                          ORDER BY priority ASC, random()
+                                          LIMIT 1 FOR UPDATE)
+                            RETURNING *
+                            """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name),
                                   sql.Identifier(table_name))
-        cursor.execute(cmd, data)
-        record = cursor.fetchone()
-        # connection.commit()
-        # cursor.close()
+        cursor.execute(cmd, [hostname, worker, group])
+        return cursor.fetchone()
 
-        # update record
-        aquire = time.time() - tic
-        hostname = socket.gethostname()
-        uuid = record[0]
-        cmd = """
-                    UPDATE {}
-                    SET aquire = %s,
-                        host = %s,
-                        worker = %s,
-                        start_time = current_timestamp,
-                        update_time = current_timestamp
-                    WHERE uuid = %s     
-                    """
-        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        data = [aquire, hostname, worker, uuid]
-        cursor.execute(cmd, data)
-
-    execute_database_command(credentials, command)
+    return execute_database_command(credentials, command)
 
 
 def update_job_status(credentials, uuid):
@@ -225,7 +207,6 @@ def update_job_status(credentials, uuid):
     table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
-        nonlocal table_name
         cmd = sql.SQL(
             """
             UPDATE {}
@@ -249,7 +230,6 @@ def mark_job_as_done(credentials, uuid):
     table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
-        nonlocal table_name
         cmd = sql.SQL("""
                 UPDATE {}
                 SET status = 'done',
@@ -273,7 +253,6 @@ def clear_queue(credentials, groupname):
     table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
-        nonlocal table_name
         cmd = """
                    DELETE FROM {} WHERE groupname = %s;    
                    """
@@ -294,12 +273,7 @@ def clear_table(credentials):
     table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
-        nonlocal table_name
-        cmd = """
-                    DELETE FROM {};    
-                    """
-        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        cursor.execute(cmd)
+        cursor.execute(sql.SQL('DELETE FROM {};').format(sql.Identifier(table_name)))
 
     execute_database_command(credentials, command)
 
@@ -311,8 +285,7 @@ def get_dataframe(credentials):
     """
     table_name, credentials = get_table_name(credentials)
     connection = psycopg2.connect(**credentials)
-    cmd = "select * from {}"
-    cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
+    cmd = sql.SQL('SELECT * FROM {}').format(sql.Identifier(table_name))
     df = pd.read_sql(cmd, con=connection)
     return df
 
@@ -324,22 +297,37 @@ def get_messages(credentials, group):
     """
     table_name, credentials = get_table_name(credentials)
 
-    record = None
-
     def command(cursor):
-        nonlocal table_name, record
-        cmd = """
-                    select count(*) from {} 
-                    where groupname = %s and
-                          status is null;    
-                    """
+        cmd = """SELECT COUNT(*) FROM {} 
+                 WHERE groupname = %s AND
+                    status IS NULL;    
+              """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         data = [group]
         cursor.execute(cmd, data)
-        record = cursor.fetchone()
+        return cursor.fetchone()
 
-    execute_database_command(credentials, command)
-    return record
+    return execute_database_command(credentials, command)
+
+
+def get_message_counts(credentials, group):
+    """ Returns the count of open, pending, and completed jobs for a given group.
+   Input: credentials, group
+   Output: (num open, num pending, num completed)
+   """
+    table_name, credentials = get_table_name(credentials)
+
+    def command(cursor):
+        cursor.execute(sql.SQL("""
+                        SELECT status, count(*) FROM {}
+                        WHERE groupname = %s
+                        GROUP BY status;
+                       """).format(sql.Identifier(table_name)),
+                       [group])
+        return cursor.fetchall()
+
+    records = {r[0]: r[1] for r in execute_database_command(credentials, command)}
+    return records.get(None, 0), records.get(None, 'running'), records.get(None, 'done')
 
 
 def reset_incomplete_jobs(credentials, group, interval='0 hours'):
@@ -354,7 +342,6 @@ def reset_incomplete_jobs(credentials, group, interval='0 hours'):
     table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
-        nonlocal table_name
         cmd = """
                 UPDATE {}
                 SET status = null,
@@ -365,8 +352,7 @@ def reset_incomplete_jobs(credentials, group, interval='0 hours'):
                     and status = 'running'
                     and update_time < current_timestamp - interval %s;
                 """
-        data = [group, interval]
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
-        cursor.execute(cmd, data)
+        cursor.execute(cmd, [group, interval])
 
     execute_database_command(credentials, command)
