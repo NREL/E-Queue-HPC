@@ -28,6 +28,8 @@ import uuid
 import datetime
 import time
 import socket
+import platform
+from typing import Callable, Optional
 
 
 def execute_database_command(credentials: {str, any}, execution_function: Callable[[any], any]) -> any:
@@ -88,7 +90,7 @@ def recreate_table(credentials: {str: any}, table_name: str, drop_table: bool = 
             cursor.execute(sql.SQL("DROP TABLE IF EXISTS {};").format(sql.Identifier(table_name)))
 
         cmd = """
-        CREATE TABLE {} (
+        CREATE TABLE IF NOT EXISTS {} (
             UUID            UUID NOT NULL PRIMARY KEY,
             username        VARCHAR NOT NULL,
             config          JSON    NOT NULL,
@@ -101,7 +103,7 @@ def recreate_table(credentials: {str: any}, table_name: str, drop_table: bool = 
             start_time      TIMESTAMP,
             update_time     TIMESTAMP,
             end_time        TIMESTAMP,
-            `depth`         INTEGER,
+            depth         INTEGER,
             wall_time       FLOAT
         );
         CREATE INDEX IF NOT EXISTS {} ON {} (groupname, priority ASC) WHERE status IS NULL;
@@ -152,7 +154,7 @@ def fetch_job(
         credentials: {str: any},
         table_name: str,
         group: str,
-        worker: Optional[uuid] = None,
+        worker: Optional[uuid.UUID] = None,
 ) -> any:
     """ Gets an available job from the group (queue, experiment, etc.).  An optional
         worker id can be assigned.  After the job is allocated to the function,
@@ -161,15 +163,17 @@ def fetch_job(
         Input:  credentials
                 table_name
                 group: str, name of groupname in table
-                worker: UUID, id for worker
+                worker: uuid.UUID, id for worker
         Output: A job record from jobqueue table
     """
+
+    host = platform.node()
 
     def command(cursor):
         tic = time.time()
         cmd = """
                             UPDATE {}
-                            SET status = 'running'
+                            SET status = 'running',
                                 host = %s,
                                 worker = %s,
                                 start_time = CURRENT_TIMESTAMP,
@@ -184,13 +188,13 @@ def fetch_job(
                             """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name),
                                   sql.Identifier(table_name))
-        cursor.execute(cmd, [hostname, worker, group])
+        cursor.execute(cmd, [host, worker, group])
         return cursor.fetchone()
 
     return execute_database_command(credentials, command)
 
 
-def update_job_status(credentials: {str: any}, table_name: str, uuid: UUID) -> None:
+def update_job_status(credentials: {str: any}, table_name: str, uuid: uuid.UUID) -> None:
     """ While a job is being worked on, the worker can periodically let the queue know it is still working on the
         job (instead of crashed or frozen).
 
@@ -213,7 +217,7 @@ def update_job_status(credentials: {str: any}, table_name: str, uuid: UUID) -> N
     execute_database_command(credentials, command)
 
 
-def mark_job_as_done(credentials: {str: any}, table_name: str, uuid: UUID) -> None:
+def mark_job_as_done(credentials: {str: any}, table_name: str, uuid: uuid.UUID) -> None:
     """ When a job is finished, this function will mark the status as done.
 
         Input:  credentials

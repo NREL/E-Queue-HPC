@@ -2,14 +2,15 @@ import copy
 import os
 import json
 from . import functions
-
+import uuid
+from typing import Optional
 
 class Message:
 
     def __init__(self, credentials: {str: any}, table_name: str, result: list) -> None:
         self._credentials: {str: any} = credentials
         self._table_name: str = table_name
-        self._uuid: UUID = uuid.UUID(result[0])
+        self._uuid: uuid.UUID = uuid.UUID(result[0])
         self._config: dict = result[2]
         self._priority: str = result[8]
 
@@ -18,7 +19,7 @@ class Message:
         return self._config
 
     @property
-    def uuid(self) -> UUID:
+    def uuid(self) -> uuid.UUID:
         return self._uuid
 
     @property
@@ -45,15 +46,16 @@ class JobQueue:
             _data = json.loads(open(filename).read())
             self._credentials = _data[self._database]
             # used for testing.  The table name should be in the credentials file.
-            if _table_name is not None:
-                self._credentials['table_name'] = _table_name
+            if _table_name is None:
+                _table_name = self._credentials['table_name']
+                del self._credentials['table_name']
 
-            self._table_name: str = self._credentials['table_name']
+            self._table_name: str = _table_name
         except KeyError as e:
             raise Exception("No credentials for {} found in {}".format(database, filename))
 
         # ensure table exists
-        functions.create_table(self._credentials)
+        functions.create_table(self._credentials, self._table_name)
 
     @property
     def messages(self) -> int:
