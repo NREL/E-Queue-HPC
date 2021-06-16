@@ -189,7 +189,7 @@ def fetch_job(
                                           WHERE status IS NULL  
                                             AND groupname = %s
                                           ORDER BY priority ASC, RANDOM()
-                                          LIMIT 1 FOR UPDATE)
+                                          LIMIT 1 FOR UPDATE SKIP LOCKED)
                             RETURNING *
                             """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name),
