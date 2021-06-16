@@ -160,7 +160,7 @@ def fetch_job(
         credentials: {str: any},
         table_name: str,
         group: str,
-        worker: Optional[str] = None,
+        worker: Optional[uuid.UUID] = None,
 ) -> any:
     """ Gets an available job from the group (queue, experiment, etc.).  An optional
         worker id can be assigned.  After the job is allocated to the function,
@@ -194,7 +194,7 @@ def fetch_job(
                             """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name),
                                   sql.Identifier(table_name))
-        cursor.execute(cmd, [host, worker, group])
+        cursor.execute(cmd, [host, None if worker is None else str(worker), group])
         return cursor.fetchone()
 
     return execute_database_command(credentials, command)
