@@ -5,6 +5,7 @@ from . import functions
 import uuid
 from typing import Optional
 
+
 class Message:
 
     def __init__(self, credentials: {str: any}, table_name: str, result: list) -> None:
@@ -69,7 +70,7 @@ class JobQueue:
     def clear(self) -> None:
         functions.clear_queue(self._credentials, self._table_name, self._queue)
 
-    def get_message(self, worker=None) -> Optional[Message]:
+    def get_message(self, worker: Optional[str] = None) -> Optional[Message]:
         res = functions.fetch_job(self._credentials, self._table_name, self._queue, worker=worker)
         if res is None:
             return None

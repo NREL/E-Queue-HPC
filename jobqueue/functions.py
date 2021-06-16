@@ -160,7 +160,7 @@ def fetch_job(
         credentials: {str: any},
         table_name: str,
         group: str,
-        worker: Optional[uuid.UUID] = None,
+        worker: Optional[str] = None,
 ) -> any:
     """ Gets an available job from the group (queue, experiment, etc.).  An optional
         worker id can be assigned.  After the job is allocated to the function,
