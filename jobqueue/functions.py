@@ -135,6 +135,7 @@ def add_job(
     """
 
     def command(cursor):
+        nonlocal priority
         job_id = job.get('uuid', str(uuid.uuid4()))
         user = os.environ.get('USER')
         if priority is None:
