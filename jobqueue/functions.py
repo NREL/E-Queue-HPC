@@ -106,16 +106,21 @@ def recreate_table(credentials: {str: any}, table_name: str, drop_table: bool = 
             depth         INTEGER,
             wall_time       FLOAT
         );
-        CREATE INDEX IF NOT EXISTS {} ON {} (groupname, priority ASC) WHERE status IS NULL;
-        CREATE INDEX IF NOT EXISTS {} ON {} (groupname, status);
         """
-        cmd = sql.SQL(cmd).format(sql.Identifier(table_name),
-                                  sql.Identifier(table_name + "_groupname_null_status_priority_idx"),
-                                  sql.Identifier(table_name),
-                                  sql.Identifier(table_name + "_groupname_status_idx"),
-                                  sql.Identifier(table_name),
-                                  )
+        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         cursor.execute(cmd)
+
+        cursor.execute(sql.SQL(
+            """CREATE INDEX IF NOT EXISTS {} ON {} (groupname, priority ASC) WHERE status IS NULL;""").format(
+            sql.Identifier(table_name + "_groupname_null_status_priority_idx"),
+            sql.Identifier(table_name),
+        ))
+
+        cursor.execute(sql.SQL(
+            """CREATE INDEX IF NOT EXISTS {} ON {} (groupname, status);""").format(
+            sql.Identifier(table_name + "_groupname_status_idx"),
+            sql.Identifier(table_name),
+        ))
 
     execute_database_command(credentials, command)
 
