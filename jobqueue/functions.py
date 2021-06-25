@@ -104,7 +104,8 @@ def recreate_table(credentials: {str: any}, table_name: str, drop_table: bool = 
             update_time     TIMESTAMP,
             end_time        TIMESTAMP,
             depth         INTEGER,
-            wall_time       FLOAT
+            wall_time       FLOAT,
+            retry_count     INT
         );
         """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
@@ -148,9 +149,9 @@ def add_job(
 
         cmd = sql.SQL("""
                     INSERT INTO {}(uuid, username, config, groupname, 
-                                         host, status, worker, creation_time, priority) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)""").format(sql.Identifier(table_name))
-        args = (job_id, user, json.dumps(job), group, None, None, None, priority)
+                                         host, status, worker, creation_time, priority, retry_count) 
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s)""").format(sql.Identifier(table_name))
+        args = (job_id, user, json.dumps(job), group, None, None, None, priority, 0)
         cursor.execute(cmd, args)
 
     execute_database_command(credentials, command)
@@ -245,6 +246,26 @@ def mark_job_as_done(credentials: {str: any}, table_name: str, uuid: uuid.UUID) 
 
     execute_database_command(credentials, command)
 
+def mark_job_as_failed(credentials: {str: any}, table_name: str, uuid: uuid.UUID) -> None:
+    """ When a job failed, this function will mark the status as failed.
+
+        Input:  credentials
+                table_name
+                uuid, str: the id of the job in the table
+
+        Output: None
+    """
+
+    def command(cursor):
+        cmd = sql.SQL("""
+                UPDATE {}
+                SET status = 'failed',
+                    update_time = CURRENT_TIMESTAMP,
+                WHERE uuid = %s
+                """).format(sql.Identifier(table_name))
+        cursor.execute(cmd, [str(uuid)])
+
+    execute_database_command(credentials, command)
 
 def clear_queue(credentials: {str: any}, table_name: str, groupname: str) -> None:
     """ Clears all records for a given group.
@@ -330,7 +351,31 @@ def get_message_counts(credentials: {str: any}, table_name: str, group: str) -> 
     return records.get(None, 0), records.get(None, 'running'), records.get(None, 'done')
 
 
-def reset_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, interval='0 hours') -> None:
+def fail_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, interval='4 hours') -> None:
+    """ Mark all incomplete jobs in a given group started more than {interval} ago as failed.
+
+        Input:  credentials
+                table_name
+                group, str: the group name
+                interval, str: Postgres interval string specifying time from now, before which jobs will be reset
+
+        Output: None
+    """
+
+    def command(cursor):
+        cmd = """
+                UPDATE {}
+                SET status = 'failed'
+                WHERE groupname = %s
+                    AND status = 'running'
+                    AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
+                """
+        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
+        cursor.execute(cmd, [group, interval])
+
+    execute_database_command(credentials, command)
+
+def reset_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, interval='4 hours') -> None:
     """ Mark all incomplete jobs in a given group started more than {interval} ago as open.
 
         Input:  credentials
@@ -347,10 +392,36 @@ def reset_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, 
                 SET status = null,
                     start_time = null,
                     host = null,
-                    aquire = null
+                    retry_count = retry_count + 1
                 WHERE groupname = %s
-                    and status = 'running'
-                    and update_time < CURRENT_TIMESTAMP - INTERVAL %s;
+                    AND status = 'running'
+                    AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
+                """
+        cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
+        cursor.execute(cmd, [group, interval])
+
+    execute_database_command(credentials, command)
+
+def reset_failed_jobs(credentials: {str: any}, table_name: str, group: str) -> None:
+    """ Mark all failed jobs in a given group started more than {interval} ago as open.
+
+        Input:  credentials
+                table_name
+                group, str: the group name
+                interval, str: Postgres interval string specifying time from now, before which jobs will be reset
+
+        Output: None
+    """
+
+    def command(cursor):
+        cmd = """
+                UPDATE {}
+                SET status = null,
+                    start_time = null,
+                    host = null,
+                    retry_count = retry_count + 1
+                WHERE groupname = %s
+                    AND status = 'failed';
                 """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name))
         cursor.execute(cmd, [group, interval])

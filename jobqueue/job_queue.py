@@ -1,34 +1,9 @@
-import copy
-import os
 import json
-from . import functions
+import os
 import uuid
 from typing import Optional
 
-
-class Message:
-
-    def __init__(self, credentials: {str: any}, table_name: str, result: list) -> None:
-        self._credentials: {str: any} = credentials
-        self._table_name: str = table_name
-        self._uuid: uuid.UUID = uuid.UUID(result[0])
-        self._config: dict = result[2]
-        self._priority: str = result[8]
-
-    @property
-    def config(self) -> {str: any}:
-        return self._config
-
-    @property
-    def uuid(self) -> uuid.UUID:
-        return self._uuid
-
-    @property
-    def priority(self) -> str:
-        return self._priority
-
-    def mark_complete(self) -> None:
-        functions.mark_job_as_done(self._credentials, self._table_name, self._uuid)
+from . import functions
 
 
 class JobQueue:
@@ -79,8 +54,59 @@ class JobQueue:
     def add_job(self, job, priority=None) -> None:
         functions.add_job(self._credentials, self._table_name, self._queue, job, priority=priority)
 
+    def fail_incomplete_jobs(self, interval='4 hours') -> None:
+        functions.fail_incomplete_jobs(self._credentials, self._table_name, self._queue, interval=interval)
+
     def reset_incomplete_jobs(self, interval='4 hours') -> None:
         functions.reset_incomplete_jobs(self._credentials, self._table_name, self._queue, interval=interval)
+
+    def reset_failed_jobs(self) -> None:
+        functions.reset_failed_jobs(self._credentials, self._table_name, self._queue)
+
+    def run_worker(self, handler, wait_until_exit=15 * 60, maximum_waiting_time=2 * 60):
+        print(f"Job Queue: Starting...")
+
+        worker_id = uuid.uuid4()
+        wait_start = None
+        while True:
+
+            # Pull job off the queue
+            message = self.get_message(worker=worker_id)
+
+            if message is None:
+
+                if wait_start is None:
+                    wait_start = time.time()
+                    wait_bound = 1
+                else:
+                    waiting_time = time.time() - wait_start
+                    if waiting_time > wait_until_exit:
+                        print("Job Queue: No Jobs, max waiting time exceeded. Exiting...")
+                        break
+
+                # No jobs, wait and try again.
+                print("Job Queue: No jobs found. Waiting...")
+
+                # bounded randomized exponential backoff
+                wait_bound = min(maximum_waiting_time, wait_bound * 2)
+                time.sleep(random.randint(1, wait_bound))
+                continue
+
+            try:
+                wait_start = None
+                print(f"Job Queue: {message.uuid} running...")
+
+                handler(worker_id, message)  # handle the message
+                message.mark_complete()  # Mark the job as complete in the queue.
+
+                print(f"Job Queue: {message.uuid} done.")
+            except Exception as e:
+                print(f"Job Queue: {message.uuid} Unknown exception in jq_runner: {e}.")
+                try:
+                    message.mark_failed()
+                except Exception as e2:
+                    print(
+                        f"Job Queue: {message.uuid} exception thrown while marking as failed in jq_runner: {e}, {e2}!")
 
 # @property
 # def messages(self):
