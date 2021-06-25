@@ -1,4 +1,5 @@
 from . import functions
+import uuid
 
 class Message:
 
