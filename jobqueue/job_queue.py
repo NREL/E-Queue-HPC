@@ -1,7 +1,8 @@
 import json
 import os
 import uuid
-from typing import Optional
+from typing import Optional, Callable
+from .message import Message
 
 from . import functions
 
@@ -63,7 +64,8 @@ class JobQueue:
     def reset_failed_jobs(self) -> None:
         functions.reset_failed_jobs(self._credentials, self._table_name, self._queue)
 
-    def run_worker(self, handler, wait_until_exit=15 * 60, maximum_waiting_time=2 * 60):
+    def run_worker(self, handler: Callable[[uuid.UUID, Message], None], wait_until_exit=15 * 60,
+                   maximum_waiting_time=2 * 60):
         print(f"Job Queue: Starting...")
 
         worker_id = uuid.uuid4()

@@ -1,4 +1,4 @@
-import functions
+from .functions import *
 
 class Message:
 
