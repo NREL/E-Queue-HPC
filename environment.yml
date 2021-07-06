@@ -7,4 +7,5 @@ dependencies:
   - pytest
   - psycopg2-binary
   - pandas
+  - connectorx
 
