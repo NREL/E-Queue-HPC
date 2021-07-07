@@ -93,7 +93,7 @@ def recreate_table(credentials: {str: any}, table_name: str, drop_table: bool = 
         CREATE TABLE IF NOT EXISTS {} (
             UUID            UUID NOT NULL PRIMARY KEY,
             username        VARCHAR NOT NULL,
-            config          JSON    NOT NULL,
+            config          JSONB    NOT NULL,
             groupname       VARCHAR,
             host            VARCHAR,
             status          VARCHAR,
