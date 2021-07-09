@@ -191,7 +191,8 @@ def fetch_job(
                                             AND groupname = %s
                                           ORDER BY priority ASC, RANDOM()
                                           LIMIT 1 FOR UPDATE SKIP LOCKED)
-                            RETURNING *
+                            RETURNING uuid, username, config, groupname, host, status, worker, creation_time, priority, 
+                                start_time, update_time, end_time, depth, wall_time, retry_count, jobid
                             """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name),
                                   sql.Identifier(table_name))

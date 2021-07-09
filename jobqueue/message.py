@@ -1,5 +1,7 @@
-from . import functions
 import uuid
+
+from . import functions
+
 
 class Message:
 
@@ -8,15 +10,20 @@ class Message:
         self._table_name: str = table_name
         self._uuid: uuid.UUID = uuid.UUID(result[0])
         self._config: dict = result[2]
+        self._groupname: str = result[3]
         self._priority: str = result[8]
+
+    @property
+    def uuid(self) -> uuid.UUID:
+        return self._uuid
 
     @property
     def config(self) -> {str: any}:
         return self._config
 
     @property
-    def uuid(self) -> uuid.UUID:
-        return self._uuid
+    def groupname(self) -> str:
+        return self._groupname
 
     @property
     def priority(self) -> str:
