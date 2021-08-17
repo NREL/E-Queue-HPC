@@ -318,7 +318,6 @@ def get_messages(credentials: {str: any}, table_name: str, group: str) -> int:
     Input: credentials, table_name, group
     Output: int, number of open jobs
     """
-    table_name, credentials = get_table_name(credentials)
 
     def command(cursor):
         cmd = """SELECT COUNT(*) FROM {} 
