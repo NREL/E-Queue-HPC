@@ -78,7 +78,7 @@ def execute_database_command(
         max_attempts = 10000
         attempts = 0
         while attempts < max_attempts:
-            wait_time = 10.0
+            wait_time = 60.0
 
             try:
                 connection = psycopg2.connect(**credentials)
