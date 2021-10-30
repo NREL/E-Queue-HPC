@@ -12,7 +12,7 @@ from .message import Message
 
 class JobQueue:
 
-    def __init__(self, database: str, queue: str, _table_name=None, pooling=True) -> None:
+    def __init__(self, database: str, queue: str, _table_name=None, pooling=False, check_table=False) -> None:
         """ Interface to the jobsque database table
             database: str, name of the key in your .jobsqueue.json file.
             queue: str, name of the queue you'd like to create or use.
@@ -21,8 +21,9 @@ class JobQueue:
         """
         self._database: str = database
         self._queue: str = queue
+
+        filename = os.path.join(os.environ['HOME'], ".jobqueue.json")
         try:
-            filename = os.path.join(os.environ['HOME'], ".jobqueue.json")
             _data = json.loads(open(filename).read())
             self._credentials = _data[self._database].copy()
             if pooling:
@@ -36,8 +37,9 @@ class JobQueue:
         except KeyError as e:
             raise Exception("No credentials for {} found in {}".format(database, filename))
 
-        # ensure table exists
-        functions.create_table(self._credentials, self._table_name)
+        if check_table:
+            # ensure table exists
+            functions.create_table(self._credentials, self._table_name)
 
     @property
     def messages(self) -> int:

@@ -21,6 +21,7 @@ import datetime
 import json
 import os
 import platform
+import random
 import time
 import uuid
 from typing import Callable, Optional
@@ -73,7 +74,26 @@ def execute_database_command(
     if pooling:
         connection = acquire_connection(credentials)
     else:
-        connection = psycopg2.connect(**credentials)
+        max_wait_time = 60 * 60
+        max_attempts = 10000
+        attempts = 0
+        while attempts < max_attempts:
+            wait_time = 1.0
+
+            try:
+                connection = psycopg2.connect(**credentials)
+            except psycopg2.OperationalError as e:
+                print(f'OperationalError while connecting to database: {e}', flush=True)
+
+                if attempts >= max_attempts or wait_time >= max_wait_time:
+                    raise e
+
+                sleep_time = random.uniform(0.0, wait_time)
+                wait_time += sleep_time
+                attempts += 1
+                time.sleep(sleep_time)
+                continue
+            break
 
     cursor = None
     result = None
