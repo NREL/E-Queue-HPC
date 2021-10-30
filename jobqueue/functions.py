@@ -17,29 +17,63 @@ Author: Monte Lunacek
     table.
 """
 
-import os
-import sys
+import datetime
 import json
-import copy
+import os
+import platform
+import time
+import uuid
+from typing import Callable, Optional
+
 import pandas as pd
 import psycopg2
 from psycopg2 import sql
-import uuid
-import datetime
-import time
-import socket
-import platform
-from typing import Callable, Optional
+from psycopg2.pool import SimpleConnectionPool
+
+_connection_pools: {int: any} = {}
 
 
-def execute_database_command(credentials: {str, any}, execution_function: Callable[[any], any]) -> any:
+def close_pools() -> None:
+    for pool in _connection_pools.values():
+        pool.closeall()
+
+
+def get_pool(credentials: {str, any}) -> SimpleConnectionPool:
+    credential_id = id(credentials)
+    if credential_id in _connection_pools:
+        pool = _connection_pools[credential_id]
+    else:
+        if 'pooling' in credentials:
+            credentials = credentials.copy()
+            del credentials['pooling']
+        pool = SimpleConnectionPool(minconn=0, maxconn=2, **credentials)
+        _connection_pools[credential_id] = pool
+    return pool
+
+
+def acquire_connection(credentials: {str, any}) -> any:
+    return get_pool(credentials).getconn()
+
+
+def release_connection(credentials: {str, any}, connection: any) -> None:
+    get_pool(credentials).putconn(connection)
+
+
+def execute_database_command(
+        credentials: {str, any},
+        execution_function: Callable[[any], any],
+) -> any:
     """ Executes a function inside the scope of a database cursor, and cleans up and catches database exceptions while
         executing that function.
         Input: credentials
                execution_function - function to which the cursor is passed
         Output: return value of execution_function() call
     """
-    connection = psycopg2.connect(**credentials)
+    pooling = credentials.get('pooling', False)
+    if pooling:
+        connection = acquire_connection(credentials)
+    else:
+        connection = psycopg2.connect(**credentials)
 
     cursor = None
     result = None
@@ -55,7 +89,10 @@ def execute_database_command(credentials: {str, any}, execution_function: Callab
         if connection is not None:
             if cursor is not None:
                 cursor.close()
-            connection.close()
+            if pooling:
+                release_connection(credentials, connection)
+            else:
+                connection.close()
     return result
 
 
@@ -150,7 +187,8 @@ def add_job(
         cmd = sql.SQL("""
                     INSERT INTO {}(uuid, username, config, groupname, 
                                          host, status, worker, creation_time, priority, retry_count) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s)""").format(sql.Identifier(table_name))
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s);""").format(
+            sql.Identifier(table_name))
         args = (job_id, user, json.dumps(job), group, None, None, None, priority, 0)
         cursor.execute(cmd, args)
 
@@ -192,7 +230,7 @@ def fetch_job(
                                           ORDER BY priority ASC, RANDOM()
                                           LIMIT 1 FOR UPDATE SKIP LOCKED)
                             RETURNING uuid, username, config, groupname, host, status, worker, creation_time, priority, 
-                                start_time, update_time, end_time, depth, wall_time, retry_count, jobid
+                                start_time, update_time, end_time, depth, wall_time, retry_count, jobid;
                             """
         cmd = sql.SQL(cmd).format(sql.Identifier(table_name),
                                   sql.Identifier(table_name))
@@ -218,7 +256,7 @@ def update_job_status(credentials: {str: any}, table_name: str, uuid: uuid.UUID)
             """
             UPDATE {}
             SET update_time = CURRENT_TIMESTAMP
-            WHERE uuid = %s
+            WHERE uuid = %s;
             """).format(sql.Identifier(table_name))
         cursor.execute(cmd, [str(uuid)])
 
@@ -241,11 +279,12 @@ def mark_job_as_done(credentials: {str: any}, table_name: str, uuid: uuid.UUID) 
                 SET status = 'done',
                     update_time = CURRENT_TIMESTAMP,
                     end_time = CURRENT_TIMESTAMP 
-                WHERE uuid = %s
+                WHERE uuid = %s;
                 """).format(sql.Identifier(table_name))
         cursor.execute(cmd, [str(uuid)])
 
     execute_database_command(credentials, command)
+
 
 def mark_job_as_failed(credentials: {str: any}, table_name: str, uuid: uuid.UUID) -> None:
     """ When a job failed, this function will mark the status as failed.
@@ -261,12 +300,13 @@ def mark_job_as_failed(credentials: {str: any}, table_name: str, uuid: uuid.UUID
         cmd = sql.SQL("""
                 UPDATE {}
                 SET status = 'failed',
-                    update_time = CURRENT_TIMESTAMP,
-                WHERE uuid = %s
+                    update_time = CURRENT_TIMESTAMP
+                WHERE uuid = %s;
                 """).format(sql.Identifier(table_name))
         cursor.execute(cmd, [str(uuid)])
 
     execute_database_command(credentials, command)
+
 
 def clear_queue(credentials: {str: any}, table_name: str, groupname: str) -> None:
     """ Clears all records for a given group.
@@ -332,7 +372,11 @@ def get_messages(credentials: {str: any}, table_name: str, group: str) -> int:
     return execute_database_command(credentials, command)
 
 
-def get_message_counts(credentials: {str: any}, table_name: str, group: str) -> (int, int, int):
+def get_message_counts(
+        credentials: {str: any},
+        table_name: str,
+        group: str,
+) -> (int, int, int):
     """ Returns the count of open, pending, and completed jobs for a given group.
    Input: credentials, table_name, group
    Output: (num open, num pending, num completed)
@@ -351,7 +395,12 @@ def get_message_counts(credentials: {str: any}, table_name: str, group: str) -> 
     return records.get(None, 0), records.get(None, 'running'), records.get(None, 'done')
 
 
-def fail_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, interval='4 hours') -> None:
+def fail_incomplete_jobs(
+        credentials: {str: any},
+        table_name: str,
+        group: str,
+        interval='4 hours',
+) -> None:
     """ Mark all incomplete jobs in a given group started more than {interval} ago as failed.
 
         Input:  credentials
@@ -375,7 +424,13 @@ def fail_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, i
 
     execute_database_command(credentials, command)
 
-def reset_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, interval='4 hours') -> None:
+
+def reset_incomplete_jobs(
+        credentials: {str: any},
+        table_name: str,
+        group: str,
+        interval='4 hours',
+) -> None:
     """ Mark all incomplete jobs in a given group started more than {interval} ago as open.
 
         Input:  credentials
@@ -402,7 +457,13 @@ def reset_incomplete_jobs(credentials: {str: any}, table_name: str, group: str, 
 
     execute_database_command(credentials, command)
 
-def reset_failed_jobs(credentials: {str: any}, table_name: str, group: str) -> None:
+
+def reset_failed_jobs(
+        credentials: {str: any},
+        table_name: str,
+        group: str,
+        interval='4 hours',
+) -> None:
     """ Mark all failed jobs in a given group started more than {interval} ago as open.
 
         Input:  credentials

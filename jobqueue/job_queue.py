@@ -1,17 +1,18 @@
 import json
 import os
+import random
+import time
+import traceback
 import uuid
 from typing import Optional, Callable
-from .message import Message
-import time
-import random
 
 from . import functions
+from .message import Message
 
 
 class JobQueue:
 
-    def __init__(self, database: str, queue: str, _table_name=None) -> None:
+    def __init__(self, database: str, queue: str, _table_name=None, pooling=True) -> None:
         """ Interface to the jobsque database table
             database: str, name of the key in your .jobsqueue.json file.
             queue: str, name of the queue you'd like to create or use.
@@ -23,7 +24,9 @@ class JobQueue:
         try:
             filename = os.path.join(os.environ['HOME'], ".jobqueue.json")
             _data = json.loads(open(filename).read())
-            self._credentials = _data[self._database]
+            self._credentials = _data[self._database].copy()
+            if pooling:
+                self._credentials['pooling'] = pooling
             # used for testing.  The table name should be in the credentials file.
             if _table_name is None:
                 _table_name = self._credentials['table_name']
@@ -67,11 +70,12 @@ class JobQueue:
         functions.reset_failed_jobs(self._credentials, self._table_name, self._queue)
 
     def run_worker(self, handler: Callable[[uuid.UUID, Message], None], wait_until_exit=15 * 60,
-                   maximum_waiting_time=2 * 60):
+                   maximum_waiting_time=5 * 60):
         print(f"Job Queue: Starting...")
 
         worker_id = uuid.uuid4()
         wait_start = None
+        wait_bound = 1.0
         while True:
 
             # Pull job off the queue
@@ -93,7 +97,7 @@ class JobQueue:
 
                 # bounded randomized exponential backoff
                 wait_bound = min(maximum_waiting_time, wait_bound * 2)
-                time.sleep(random.randint(1, wait_bound))
+                time.sleep(random.uniform(1.0, wait_bound))
                 continue
 
             try:
@@ -105,12 +109,14 @@ class JobQueue:
 
                 print(f"Job Queue: {message.uuid} done.")
             except Exception as e:
-                print(f"Job Queue: {message.uuid} Unknown exception in jq_runner: {e}.")
+                print(f"Job Queue: {message.uuid} unhandled exception {e} in jq_runner.")
+                print(traceback.format_exc())
                 try:
                     message.mark_failed()
                 except Exception as e2:
                     print(
                         f"Job Queue: {message.uuid} exception thrown while marking as failed in jq_runner: {e}, {e2}!")
+                    print(traceback.format_exc())
 
 # @property
 # def messages(self):
