@@ -1,4 +1,4 @@
-from jobqueue.job_queue import Message
+from jobqueue.job_queue import Job
 import time
 import jobqueue
 

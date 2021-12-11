@@ -33,7 +33,7 @@ def main():
     filename = os.path.join(os.environ['HOME'], ".jobqueue.json")
     database = json.loads(open(filename).read())
 
-    df = jobqueue.functions.get_dataframe(database[args.database])
+    df = jobqueue.functions.get_jobs_as_dataframe(database[args.database])
     tmp = df.groupby(['username', 'groupname', 'status'])['config'].count().reset_index()
     print("")
     print(tmp)
