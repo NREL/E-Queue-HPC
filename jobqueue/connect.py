@@ -19,12 +19,12 @@ Author: Monte Lunacek
 
 import random
 import time
-from typing import Callable
+from typing import Callable, Dict
 
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 
-_connection_pools: {int: any} = {}
+_connection_pools: Dict[int, any] = {}
 
 
 def close_pools() -> None:
@@ -32,7 +32,7 @@ def close_pools() -> None:
         pool.closeall()
 
 
-def _get_pool(credentials: {str, any}) -> SimpleConnectionPool:
+def _get_pool(credentials: Dict[int, any]) -> SimpleConnectionPool:
     credential_id = id(credentials)
     if credential_id in _connection_pools:
         pool = _connection_pools[credential_id]
@@ -45,15 +45,15 @@ def _get_pool(credentials: {str, any}) -> SimpleConnectionPool:
     return pool
 
 
-def acquire_pooled_connection(credentials: {str, any}) -> any:
+def acquire_pooled_connection(credentials: Dict[int, any]) -> any:
     return _get_pool(credentials).getconn()
 
 
-def release_pooled_connection(credentials: {str, any}, connection: any) -> None:
+def release_pooled_connection(credentials: Dict[int, any], connection: any) -> None:
     _get_pool(credentials).putconn(connection)
 
 
-def connect(credentials: {str, any}) -> any:
+def connect(credentials: Dict[int, any]) -> any:
     pooling = credentials.get('pooling', False)
     connection = None
     if pooling:
@@ -70,15 +70,14 @@ def connect(credentials: {str, any}) -> any:
                 connection = psycopg2.connect(**credentials)
                 return connection
             except psycopg2.OperationalError as e:
-                print(f'OperationalError while connecting to database: {e}', flush=True)
+                print(
+                    f'OperationalError while connecting to database: {e}', flush=True)
 
-                sleep_time = random.uniform(min_wait, max(initial_wait_max, wait_time))
+                sleep_time = random.uniform(
+                    min_wait, max(initial_wait_max, wait_time))
                 wait_time += sleep_time
                 attempts += 1
 
                 if attempts >= max_attempts or wait_time >= max_wait:
                     raise e
                 time.sleep(sleep_time)
-
-
-

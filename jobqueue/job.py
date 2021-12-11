@@ -10,7 +10,6 @@ from .job_status import JobStatus
 
 @dataclass
 class Job:
-    queue :JobQueue
     id: uuid.UUID  # = field(default_factory=uuid.uuid4)
     priority: Optional[int]
     
@@ -24,11 +23,3 @@ class Job:
     parent:Optional[uuid.UUID] = None
     depth:int = 0
     command : any = None
-
-
-
-    # def mark_complete(self) -> None:
-    #     functions.mark_job_as_done(self._credentials, self._table_name, self._uuid)
-    #
-    # def mark_failed(self) -> None:
-    #     functions.mark_job_as_failed(self._credentials, self._table_name, self._uuid)

@@ -62,7 +62,7 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
 
         if check_table:
             # ensure table exists
-            functions.create_tables(self.credentials, self._table_name)
+            functions._create_tables(self.credentials, self._table_name)
 
     @property
     def messages(self) -> int:
@@ -71,161 +71,43 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
         return res[0]
 
     @property
-    def message_counts(self) -> Tuple[int, int, int]:
-        return functions.get_job_counts(self)
+    def message_counts(self) -> Tuple[int, int, int, int]:
+        """ Returns the count of open, pending, and completed jobs for a given group.
+        Output: (num open, num pending, num completed)
+        """
+        with CursorManager(self.credentials) as cursor:
+            cursor.execute(sql.SQL(
+                """
+                    SELECT 
+                        (SELECT COUNT(*) FROM {queue_table} 
+                            WHERE queue = %s AND
+                                status = 0) AS open,
+                        (SELECT COUNT(*) FROM {queue_table} 
+                            WHERE queue = %s AND
+                                status = 1) AS running,
+                        (SELECT COUNT(*) FROM {queue_table} 
+                            WHERE queue = %s AND
+                                status = 2) AS done,
+                        (SELECT COUNT(*) FROM {queue_table} 
+                            WHERE queue = %s AND
+                                status = -1) AS failed
+                    ;
+                    """
+            ).format(
+                queue_table=sql.Identifier(self.queue_table)),
+                [queue.queue_id])
+            records = cursor.fetchone()
+            return tuple(records)
 
     def clear(self) -> None:
-        functions.clear_queue(self)
-
-    def get_message(self, worker: Optional[uuid.UUID] = None) -> Optional[Job]:
-        res = functions.pop_jobs(
-            self.credentials, self._table_name, self._queue, worker=worker)
-        if res is None:
-            return None
-        return Job(self, result[0], result[1], command=result[2])
-
-    def add_job(self, job, priority=None) -> None:
-        functions.add_job(self.credentials, self._table_name,
-                          self._queue, job, priority=priority)
-
-    def fail_incomplete_jobs(self, interval='4 hours') -> None:
-        functions.fail_incomplete_jobs(
-            self.credentials, self._table_name, self._queue, interval=interval)
-
-    def reset_incomplete_jobs(self, interval='4 hours') -> None:
-        functions.reset_incomplete_jobs(
-            self.credentials, self._table_name, self._queue, interval=interval)
-
-    def reset_failed_jobs(self) -> None:
-        functions.reset_failed_jobs(
-            self.credentials, self._table_name, self._queue)
-
-    def run_worker(self, handler: Callable[[uuid.UUID, Job], None], wait_until_exit=15 * 60,
-                   maximum_waiting_time=5 * 60):
-        print(f"Job Queue: Starting...")
-
-        worker_id = uuid.uuid4()
-        wait_start = None
-        wait_bound = 1.0
-        while True:
-
-            # Pull job off the queue
-            message = self.get_message(worker=worker_id)
-
-            if message is None:
-
-                if wait_start is None:
-                    wait_start = time.time()
-                    wait_bound = 1
-                else:
-                    waiting_time = time.time() - wait_start
-                    if waiting_time > wait_until_exit:
-                        print(
-                            "Job Queue: No Jobs, max waiting time exceeded. Exiting...")
-                        break
-
-                # No jobs, wait and try again.
-                print("Job Queue: No jobs found. Waiting...")
-
-                # bounded randomized exponential backoff
-                wait_bound = min(maximum_waiting_time, wait_bound * 2)
-                time.sleep(random.uniform(1.0, wait_bound))
-                continue
-
-            try:
-                wait_start = None
-                print(f"Job Queue: {message.uuid} running...")
-
-                handler(worker_id, message)  # handle the message
-                # Mark the job as complete in the queue.
-                message.mark_complete()
-
-                print(f"Job Queue: {message.uuid} done.")
-            except Exception as e:
-                print(
-                    f"Job Queue: {message.uuid} unhandled exception {e} in jq_runner.")
-                print(traceback.format_exc())
-                try:
-                    message.mark_failed()
-                except Exception as e2:
-                    print(
-                        f"Job Queue: {message.uuid} exception thrown while marking as failed in jq_runner: {e}, {e2}!")
-                    print(traceback.format_exc())
-
-    def _create_tables(self, drop_table: bool = True) -> None:
-        """ Deletes and replaces or creates the current jobqueue table.
+        """ Clears all records for a given group.
         """
-        with CursorManager(self.credentials, autocommit=False) as cursor:
-            if drop_table:
-                cursor.execute(sql.SQL("DROP TABLE IF EXISTS {};").format(
-                    sql.Identifier(table_name)))
+        with CursorManager(self.credentials) as cursor:
+            cursor.execute(sql.SQL("DELETE FROM {queue_table} WHERE queue = %s;").format(
+                queue_table=sql.Identifier(self.queue_table)),
+                [queue.queue_id])
 
-            cursor.execute(sql.SQL("""
-            CREATE TABLE IF NOT EXISTS {queue_table} (
-                queue         int NOT NULL,
-                priority      bigint NOT NULL,
-                id            uuid NOT NULL PRIMARY KEY,
-                run_count     smallint NOT NULL DEFAULT 0,
-                start_time    timestamp,
-                update_time   timestamp,
-                worker        uuid,
-                error         text
-            );
-            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, priority) WHERE start_time IS NULL;
-            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, status, update_time) WHERE (start_time IS NOT NULL);
-
-            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, update_time) WHERE (start_time IS NOT NULL AND end_time IS NULL);
-            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, end_time) WHERE end_time IS NOT NULL;
-            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, end_time) WHERE error IS NOT NULL;
-            CREATE TABLE IF NOT EXISTS {data_table} (
-                id            uuid NOT NULL PRIMARY KEY,
-                parent        uuid,
-                depth         smallint NOT NULL,
-                command       jsonb
-            );
-            CREATE INDEX IF NOT EXISTS ON {data_table} (parent, id);
-            """).format(
-                queue_table=sql.Identifier(self.queue_table),
-                data_table=sql.Identifier(queue.data_table),
-            ))
-
-            cursor.connection.commit()
-    
-    def _push_jobs(self, jobs: Iterator[Job]) -> None:
-        """ Adds a job (dictionary) to the database jobqueue table.
-            Input:  credentials
-                    group: str, name of "queue" in the database
-                    job: dict, must be able to call json.dumps
-            Output: None
-        """
-        # https://stackoverflow.com/questions/8134602/psycopg2-insert-multiple-rows-with-one-query
-        with CursorManager(self.credentials, autocommit=True) as cursor:
-            # cursor, insert_query, data, template=None, page_size=100
-            command = sql.SQL("""
-                WITH t AS (SELECT * FROM (VALUES %s) AS t (queue, priority, id, parent, depth, command),
-                s AS (INSERT INTO {queue_table} (queue, priority, id)
-                    (SELECT queue, priority, id FROM t)
-                    ON CONFLICT DO NOTHING)
-                INSERT INTO {data_table} (id, parent, depth, command)
-                    (SELECT id, parent, depth, command FROM t)
-                    ON CONFLICT DO NOTHING;""").format(
-                queue_table=sql.Identifier(self.queue_table),
-                data_table=sql.Identifier(queue.data_table),
-            )
-            # TODO: remove queue id from here and put it into the command instead
-            psycopg2.extras.execute_values(
-                cursor,
-                command,
-                ((queue.queue_id, j.queue, j.priority, j.parent, j.depth, j.command)
-                for j in jobs),
-                template=None,
-                page_size=128,
-            )
-
-            cursor.connection.commit()
-
-
-    def _pop_jobs(self, worker_id: Optional[uuid.UUID], num_jobs: int = 1) -> any:
+    def pop(self, worker: Optional[uuid.UUID] = None, num_jobs: int = 1) -> Optional[Job]:
         """ 
         Claims and returns jobs from the queue.  
         An optional worker id can be assigned. 
@@ -265,12 +147,13 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
                 SELECT id, priority FROM {queue_table}
                     WHERE 
                         queue = %(queue)s AND
-                        start_time IS NULL
+                        status = 0
                     ORDER BY priority ASC
                     LIMIT %(num_jobs)s FOR UPDATE SKIP LOCKED),
             u AS (
                 UPDATE {queue_table} as q
-                    SET run_count = run_count + 1,
+                    SET 
+                        status = 1,
                         worker = %(worker_id)s,
                         start_time = NOW(),
                         update_time = NOW()
@@ -284,97 +167,229 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
                 p.id = t.id;""").format(
                 queue_table=sql.Identifier(self.queue_table),
                 data_table=sql.Identifier(self.data_Table),
-            ) {
+            ), {
                 'queue': queue.queue_id,
                 'worker_id': worker_id,
                 'num_jobs': num_jobs,
             })
+            return [Job(self, result[0], result[1], command=result[2]) for result in cursor.fetchall()]
 
-            # command = sql.SQL("""
-            # WITH popped AS (
-            #     DELETE FROM {queue_table}
-            #         WHERE id IN (
-            #             SELECT id FROM {queue_table}
-            #                 WHERE queue = %(queue)s
-            #                 ORDER BY priority ASC
-            #                 LIMIT %(num)s FOR UPDATE SKIP LOCKED)
-            #         RETURNING id, priority),
-            #     run_record AS (
-            #         INSERT INTO {queue_table} (id, %(queue)s, %(worker)s, NOW(), NOW(), NULL)
-            #             SELECT id FROM popped
-            #             RETURNING id
-            #     )
-            # SELECT popped.id AS id, popped.priority AS priority, task.config
-            # FROM
-            #     popped,
-            #     {data_table} as task
-            # WHERE
-            #     popped.id = task.id;
-            # """).format(
-            #     queue_table = sql.Identifier(table_name),
-            #     queue_table = sql.Identifier(table_name))
-            # cursor.execute(command, {
-            #     'queue':queue,
-            #     'num':num,
-            #     'worker':worker,
-            #     })
+    def push(self, jobs: Iterator[Job]) -> None:
+        """ Adds a job (dictionary) to the database jobqueue table.
+            Input:  credentials
+                    group: str, name of "queue" in the database
+                    job: dict, must be able to call json.dumps
+            Output: None
+        """
+        # https://stackoverflow.com/questions/8134602/psycopg2-insert-multiple-rows-with-one-query
+        with CursorManager(self.credentials, autocommit=True) as cursor:
+            # cursor, insert_query, data, template=None, page_size=100
+            command = sql.SQL("""
+                WITH t AS (SELECT * FROM (VALUES %s) AS t (queue, priority, id, parent, depth, command),
+                s AS (INSERT INTO {queue_table} (queue, priority, id)
+                    (SELECT queue, priority, id FROM t)
+                    ON CONFLICT DO NOTHING)
+                INSERT INTO {data_table} (id, parent, depth, command)
+                    (SELECT id, parent, depth, command FROM t)
+                    ON CONFLICT DO NOTHING;""").format(
+                queue_table=sql.Identifier(self.queue_table),
+                data_table=sql.Identifier(queue.data_table),
+            )
+            # TODO: remove queue id from here and put it into the command instead
+            psycopg2.extras.execute_values(
+                cursor,
+                command,
+                ((queue.queue_id, j.queue, j.priority, j.parent, j.depth, j.command)
+                 for j in jobs),
+                template=None,
+                page_size=128,
+            )
 
-            # SELECT
-            #     id, config, priority
-            # FROM {data_table} as tt
-            #     WHERE id IN (
-            #         DELETE FROM {queue_table}
-            #         WHERE id IN (
-            #             SELECT id FROM {queue_table}
-            #             WHERE queue = %s
-            #             ORDER BY priority ASC, RANDOM()
-            #             LIMIT %s FOR UPDATE SKIP LOCKED
-            #             )
-            #         RETURNING id, priority)
-            #     """).format(
-            #         data_table = sql.Identifier(data_table),
-            #         queue_table = sql.Identifier(queue_table))
-            # command = sql.SQL("""
-            #                     UPDATE {queue_table}
-            #                     SET
-            #                         priority = NULL,
-            #                         worker = %(worker)s,
-            #                         start_time = CURRENT_TIMESTAMP,
-            #                         update_time = CURRENT_TIMESTAMP
-            #                     WHERE id = (SELECT id
-            #                                   FROM {queue_table}
-            #                                   WHERE
-            #                                     priority IS NOT NULL
-            #                                     AND queue = %(queue)s
-            #                                   ORDER BY priority ASC, RANDOM()
-            #                                   LIMIT 1 FOR UPDATE SKIP LOCKED)
-            #                     RETURNING id, config, priority;
-            #                     """).format(sql.Identifier(table_name),
-            #                           sql.Identifier(table_name))
-            # cursor.execute(command, [host, None if worker is None else str(worker), group])
+    def fail_incomplete_jobs(self, interval='4 hours') -> None:
+        """ Mark all incomplete jobs in a given group started more than {interval} ago as failed.
+        """
+        with CursorManager(self.credentials) as cursor:
+            cursor.execute(sql.SQL(
+                """
+                UPDATE {queue_table}
+                    SET update_time = NOW()
+                    WHERE queue = %s
+                        AND status = 1
+                        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
+                """
+            ).format(
+                queue_table=sql.Identifier(self.queue_table)),
+                [queue.queue_id, interval])
 
-            # command = sql.SQL("""
-            #                     UPDATE {}
-            #                     SET status = 'running',
-            #                         host = %s,
-            #                         worker = %s,
-            #                         start_time = CURRENT_TIMESTAMP,
-            #                         update_time = CURRENT_TIMESTAMP
-            #                     WHERE uuid = (SELECT uuid
-            #                                   FROM {}
-            #                                   WHERE status IS NULL
-            #                                     AND groupname = %s
-            #                                   ORDER BY priority ASC, RANDOM()
-            #                                   LIMIT 1 FOR UPDATE SKIP LOCKED)
-            #                     RETURNING uuid, config, priority;
-            #                     """).format(sql.Identifier(table_name),
-            #                           sql.Identifier(table_name))
-            if num_jobs == 1:
-                return cursor.fetchone()
-            return cursor.fetchall()
+    def reset_incomplete_jobs(self, interval='4 hours') -> None:
+        """ Mark all incomplete jobs in a given group started more than {interval} ago as open.
+        """
 
+        with CursorManager(self.credentials) as cursor:
+            cursor.execute(sql.SQL(
+                """
+                UPDATE {queue_table}
+                    SET 
+                        status = 0,
+                        start_time = NULL, 
+                        update_time = NULL, 
+                        error = NULL,
+                        error_count = COALESCE(error_count, 0) + 1
+                    WHERE queue = %s
+                        AND status = 1
+                        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
+                """
+            ).format(
+                queue_table=sql.Identifier(self.queue_table)),
+                [queue.queue_id, interval])
 
-    def _update_job(self, job_id: uuid.UUID) -> None:
+    def reset_failed_jobs(self) -> None:
+        """ Mark all failed jobs in a given group started more than {interval} ago as open.
+        """
+        with CursorManager(self.credentials) as cursor:
+            cursor.execute(sql.SQL(
+                """
+                        UPDATE {queue_table}
+                            SET status = 0,
+                                start_time = NULL, 
+                                update_time = NULL, 
+                                end_time = NULL, 
+                                error = NULL
+                            WHERE queue = %s
+                                AND status = -1
+                                AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
+                        """
+            ).format(
+                queue_table=sql.Identifier(self.queue_table)),
+                [queue.queue_id, interval])
+
+    def run_worker(self, handler: Callable[[uuid.UUID, Job], None], wait_until_exit=15 * 60,
+                   maximum_waiting_time=5 * 60):
+        print(f"Job Queue: Starting...")
+
+        worker_id = uuid.uuid4()
+        wait_start = None
+        wait_bound = 1.0
+        while True:
+
+            # Pull job off the queue
+            jobs = self.pop(worker=worker_id)
+
+            if len(jobs) == 0:
+
+                if wait_start is None:
+                    wait_start = time.time()
+                    wait_bound = 1
+                else:
+                    waiting_time = time.time() - wait_start
+                    if waiting_time > wait_until_exit:
+                        print(
+                            "Job Queue: No Jobs, max waiting time exceeded. Exiting...")
+                        break
+
+                # No jobs, wait and try again.
+                print("Job Queue: No jobs found. Waiting...")
+
+                # bounded randomized exponential backoff
+                wait_bound = min(maximum_waiting_time, wait_bound * 2)
+                time.sleep(random.uniform(1.0, wait_bound))
+                continue
+
+            job = jobs[0]
+            try:
+                wait_start = None
+                
+                print(f"Job Queue: {job.uuid} running...")
+
+                handler(worker_id, job)  # handle the message
+                # Mark the job as complete in the queue.
+                self.mark_job_complete(job)
+
+                print(f"Job Queue: {job.uuid} done.")
+            except Exception as e:
+                print(
+                    f"Job Queue: {job.uuid} unhandled exception {e} in jq_runner.")
+                print(traceback.format_exc())
+                try:
+                    self.mark_job_failed(job, str(e))
+                except Exception as e2:
+                    print(
+                        f"Job Queue: {job.uuid} exception thrown while marking as failed in jq_runner: {e}, {e2}!")
+                    print(traceback.format_exc())
+
+    def _create_tables(self, drop_table: bool = True) -> None:
+        """ Deletes and replaces or creates the current jobqueue table.
+        """
+        with CursorManager(self.credentials, autocommit=False) as cursor:
+            if drop_table:
+                cursor.execute(sql.SQL("DROP TABLE IF EXISTS {};").format(
+                    sql.Identifier(table_name)))
+
+            cursor.execute(sql.SQL("""
+            CREATE TABLE IF NOT EXISTS {queue_table} (
+                queue         smallint NOT NULL,
+                status        smallint NOT NULL DEFAULT 0,
+                priority      int NOT NULL,
+                id            uuid NOT NULL PRIMARY KEY,
+                start_time    timestamp,
+                update_time   timestamp,
+                worker        uuid,
+                error_count   smallint,
+                error         text
+            );
+            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, priority) WHERE status = 0;
+            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, status, update_time) WHERE status <> 0;
+
+            CREATE TABLE IF NOT EXISTS {data_table} (
+                id            uuid NOT NULL PRIMARY KEY,
+                parent        uuid,
+                depth         smallint,
+                command       jsonb
+            );
+            CREATE INDEX IF NOT EXISTS ON {data_table} (parent, id) WHERE PARENT IS NOT NULL;
+            """).format(
+                queue_table=sql.Identifier(self.queue_table),
+                data_table=sql.Identifier(queue.data_table),
+            ))
+
+            cursor.connection.commit()
+
+    def _push_jobs(self, jobs: Iterator[Job]) -> None:
+        """ Adds a job (dictionary) to the database jobqueue table.
+            Input:  credentials
+                    group: str, name of "queue" in the database
+                    job: dict, must be able to call json.dumps
+            Output: None
+        """
+        # https://stackoverflow.com/questions/8134602/psycopg2-insert-multiple-rows-with-one-query
+        with CursorManager(self.credentials, autocommit=True) as cursor:
+            # cursor, insert_query, data, template=None, page_size=100
+            command = sql.SQL("""
+                WITH t AS (SELECT * FROM (VALUES %s) AS t (queue, priority, id, parent, depth, command),
+                s AS (INSERT INTO {queue_table} (queue, priority, id)
+                    (SELECT queue, priority, id FROM t)
+                    ON CONFLICT DO NOTHING)
+                INSERT INTO {data_table} (id, parent, depth, command)
+                    (SELECT id, parent, depth, command FROM t)
+                    ON CONFLICT DO NOTHING;""").format(
+                queue_table=sql.Identifier(self.queue_table),
+                data_table=sql.Identifier(queue.data_table),
+            )
+            # TODO: remove queue id from here and put it into the command instead
+            psycopg2.extras.execute_values(
+                cursor,
+                command,
+                ((queue.queue_id, j.priority, j.parent, j.depth, j.command)
+                 for j in jobs),
+                template=None,
+                page_size=128,
+            )
+
+            cursor.connection.commit()
+
+    
+
+    def update_job(self, job_id: uuid.UUID) -> None:
         """ While a job is being worked on, the worker can periodically let the queue know it is still working on the
             job (instead of crashed or frozen).
         """
@@ -387,20 +402,18 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
                 queue_table=sql.Identifier(self.queue_table)),
                 [str(job_id)])
 
-
-    def _mark_job_complete(self, job_id: uuid.UUID) -> None:
+    def mark_job_complete(self, job_id: uuid.UUID) -> None:
         """ When a job is finished, this function will mark the status as done.
         """
         with CursorManager(self.credentials) as cursor:
             cursor.execute(sql.SQL("""
                     UPDATE {queue_table}
-                    SET update_time = NULL,
-                        end_time = NOW()
+                    SET status = 2,
+                        update_time = NOW()
                     WHERE id = %s;
                     """).format(
                 queue_table=sql.Identifier(self.queue_table)),
                 [str(job_id)])
-
 
     def mark_job_failed(self, job_id: uuid.UUID, error: str) -> None:
         """ When a job failed, this function will mark the status as failed.
@@ -408,32 +421,14 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
         with CursorManager(self.credentials) as cursor:
             cursor.execute(sql.SQL("""
                     UPDATE {queue_table}
-                    SET update_time = NOW(),
-                        end_time = NOW(),
-                        error = %s
+                    SET status = -1,
+                        update_time = NOW(),
+                        error = %s,
+                        error_count = COALESCE(error_count, 0) + 1
                     WHERE id = %s;
                     """).format(
                 queue_table=sql.Identifier(self.queue_table)),
                 [error, str(job_id)])
-
-
-    def clear_queue(self) -> None:
-        """ Clears all records for a given group.
-        """
-        with CursorManager(self.credentials) as cursor:
-            cursor.execute(sql.SQL("DELETE FROM {queue_table} WHERE queue = %s;").format(
-                queue_table=sql.Identifier(self.queue_table)),
-                [queue.queue_id])
-
-
-    def clear_all_queues(self) -> None:
-        """ Clears all records in the table.
-        """
-        with CursorManager(self.credentials) as cursor:
-            cursor.execute(sql.SQL("DELETE FROM {queue_table};").format(
-                queue_table=sql.Identifier(self.queue_table)),
-                [queue.queue_id])
-
 
     def get_jobs_as_dataframe(self) -> pd.DataFrame:
         """ Returns all queues as a dataframe.
@@ -443,13 +438,13 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
                 """
                 SELECT 
                     s.queue as queue,
+                    s.status as status,
                     s.priority as priority,
                     s.id as id,
-                    s.run_count as run_count,
                     s.start_time as start_time,
                     s.update_time as update_time,
-                    s.end_time as end_time,
                     s.worker as worker,
+                    s.error_count as error_count,
                     s.error as error,
                     d.quparenteue as parent,
                     d.depth as depth,
@@ -462,9 +457,8 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
                 """).format(
                 queue_table=sql.Identifier(self.queue_table),
                 data_table=sql.Identifier(self.data_table))
-        
-            return pd.read_sql(command, con=cursor.connection)
 
+            return pd.read_sql(command, con=cursor.connection)
 
     def get_queue_length(self) -> int:
         """ Returns the count of open jobs for a given group.
@@ -476,106 +470,12 @@ def __init__(self, database: str, queue: int = 0, table_base_name: str = 'job', 
                 SELECT COUNT(*) FROM {queue_table} 
                     WHERE 
                         queue = %s AND
-                        priority IS NOT NULL;
+                        status = 0;
                 """
             ).format(
                 queue_table=sql.Identifier(self.queue_table)),
                 [queue.queue_id])
             return cursor.fetchone()
-
-
-    def get_job_counts(self) -> Tuple[int, int, int]:
-        """ Returns the count of open, pending, and completed jobs for a given group.
-    Output: (num open, num pending, num completed)
-    """
-        with CursorManager(self.credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                SELECT 
-                    (SELECT COUNT(*) FROM {queue_table} 
-                        WHERE queue = %s AND
-                            start_time IS NULL) AS open,
-                    (SELECT COUNT(*) FROM {queue_table} 
-                        WHERE queue = %s AND
-                            start_time IS NOT NULL AND end_time IS NULL) AS running,
-                    (SELECT COUNT(*) FROM {queue_table} 
-                        WHERE queue = %s AND
-                            start_time IS NOT NULL AND end_time IS NOT NULL) AS done
-                ;
-                """
-            ).format(
-                queue_table=sql.Identifier(self.queue_table)),
-                [queue.queue_id])
-            records = cursor.fetchone()
-            return tuple(records)
-
-
-    def fail_incomplete_jobs(self, interval='4 hours') -> None:
-        """ Mark all incomplete jobs in a given group started more than {interval} ago as failed.
-        """
-        with CursorManager(self.credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                UPDATE {queue_table}
-                    SET error = 'timed out',
-                        end_time = NOw()
-                    WHERE queue = %s
-                        AND start_time IS NOT NULL 
-                        AND end_time IS NULL
-                        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
-                """
-            ).format(
-                queue_table=sql.Identifier(self.queue_table)),
-                [queue.queue_id, interval])
-
-
-    def reset_incomplete_jobs(self,interval='4 hours') -> None:
-        """ Mark all incomplete jobs in a given group started more than {interval} ago as open.
-        """
-
-        with CursorManager(self.credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                UPDATE {queue_table}
-                    SET 
-                        start_time = NULL, 
-                        update_time = NULL, 
-                        run_count = run_count + 1
-                    WHERE queue = %s
-                        AND start_time IS NOT NULL 
-                        AND end_time IS NULL
-                        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
-                """
-            ).format(
-                queue_table=sql.Identifier(self.queue_table)),
-                [queue.queue_id, interval])
-
-
-    def reset_failed_jobs(
-            self,
-            interval='4 hours',
-    ) -> None:
-        """ Mark all failed jobs in a given group started more than {interval} ago as open.
-        """
-        with CursorManager(self.credentials) as cursor:
-                    cursor.execute(sql.SQL(
-                        """
-                        UPDATE {queue_table}
-                            SET start_time = NULL, 
-                                update_time = NULL, 
-                                end_time = NULL, 
-                                error = NULL,
-                                run_count = run_count + 1
-                            WHERE queue = %s
-                                AND start_time IS NOT NULL 
-                                AND end_time IS NOT NULL 
-                                AND error IS NOT NULL
-                                AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
-                        """
-                    ).format(
-                        queue_table=sql.Identifier(self.queue_table)),
-                        [queue.queue_id, interval])
-
 
 
 # @property

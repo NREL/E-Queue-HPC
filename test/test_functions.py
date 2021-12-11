@@ -22,7 +22,7 @@ def test_functions(pooling):
     # Create table
     table_name = credentials['table_name']
     del credentials['table_name']
-    jobqueue.functions.create_tables(credentials, table_name, drop_table=True)
+    jobqueue.functions._create_tables(credentials, table_name, drop_table=True)
     jobqueue.functions.clear_all_queues(credentials, table_name)
 
     df = jobqueue.functions.get_jobs_as_dataframe(credentials, table_name)
