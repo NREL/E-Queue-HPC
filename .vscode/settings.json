@@ -1,0 +1,15 @@
+{
+    "python.pythonPath": "/home/ctripp/miniconda3/envs/dmp/bin/python",
+    "editor.formatOnSave": true,
+    "editor.formatOnType": true,
+    "python.linting.lintOnSave": true,
+    "python.linting.pylintEnabled": true,
+    "python.linting.pylintArgs": ["--load-plugins", "pylint_django"],
+    "python.linting.enabled": true,
+    "editor.rulers": [80],
+    "editor.tabSize": 2,
+    "prettier.singleQuote": true,
+    "editor.defaultFormatter": "ms-python.python",
+    "python.formatting.provider": "autopep8"
+}
+  

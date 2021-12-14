@@ -16,7 +16,8 @@ Author: Monte Lunacek
     This can be passed to any function that has already created the jobsqueue
     table.
 """
-
+import json
+import os
 import random
 import time
 from typing import Callable, Dict
@@ -25,6 +26,16 @@ import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 
 _connection_pools: Dict[int, any] = {}
+
+
+def load_credentials(database: str) -> Dict[str, any]:
+    filename = os.path.join(os.environ['HOME'], ".jobself.json")
+    try:
+        data = json.loads(open(filename).read())
+        return data[database]
+    except KeyError as e:
+        raise Exception(
+            "No credentials for {} found in {}".format(database, filename))
 
 
 def close_pools() -> None:
