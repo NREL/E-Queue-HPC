@@ -1,14 +1,38 @@
-WITH t AS 
-    (SELECT queue::SMALLINT, priority::int, id::uuid, parent::uuid, depth::SMALLINT, command::jsonb FROM 
-        (VALUES  (-1,3037,'30fe8c59-4985-4045-8ea7-f1465f9b16ec'::uuid, NULL ,0,'{"id":1}') )
-         AS t (queue, priority, id, parent, depth, command)),
-  s AS (INSERT INTO test_job_status (queue, priority, id)
-                    (SELECT queue, priority, id FROM t)
-                    ON CONFLICT DO NOTHING)
-INSERT INTO test_job_data (id, parent, depth, command)
-    (SELECT id, parent, depth, command FROM t)
-    ON CONFLICT DO NOTHING;
+SELECT * FROM pg_stat_activity WHERE datname = 'dmpapps'  ORDER BY query;
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'dmpapps' and usename = 'dmpappsops' AND pid <> pg_backend_pid();
 
 
+CREATE TABLE IF NOT EXISTS test_job_queue (
+                queue         smallint NOT NULL,
+                status        smallint NOT NULL DEFAULT 0,
+                priority      int NOT NULL,
+                id            uuid NOT NULL PRIMARY KEY,
+                start_time    timestamp,
+                update_time   timestamp,
+                worker        uuid,
+                error_count   smallint,
+                error         text
+            );
 
-SELECT * FROM test_job_status;
+
+CREATE INDEX IF NOT EXISTS test_job_queue_priority_idx ON test_job_queue (queue, priority) WHERE status = 0;
+CREATE INDEX IF NOT EXISTS test_job_queue_update_idx ON test_job_queue (queue, status, update_time) WHERE status <> 0;
+
+SELECT
+    indexname,
+    indexdef
+FROM
+    pg_indexes
+WHERE
+    tablename = 'test_job_status';
+
+
+CREATE TABLE IF NOT EXISTS test_job_data (
+                id            uuid NOT NULL PRIMARY KEY,
+                parent        uuid,
+                depth         smallint,
+                command       jsonb
+            );
+
+CREATE INDEX IF NOT EXISTS test_job_data_parent_idx ON test_job_data (parent, id) WHERE PARENT IS NOT NULL;
+

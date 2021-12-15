@@ -33,6 +33,7 @@ class JobQueue:
         credentials: Dict[str, any],
         queue: int = 0,
         check_table=False,
+        drop_table=False,
     ) -> None:
         """ Interface to the jobsque database table
         database: str, name of the key in your .jobqueue.json file.
@@ -51,7 +52,7 @@ class JobQueue:
 
         # ensure table exists
         if check_table:
-            self._create_tables()
+            self._create_tables(drop_table=drop_table)
 
     def clear(self) -> None:
         """ Clears all records for a given group.
@@ -61,7 +62,11 @@ class JobQueue:
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id])
 
-    def pop(self, worker_id: Optional[uuid.UUID] = None, num_jobs: int = 1) -> Optional[Job]:
+    def pop(self, worker_id: Optional[uuid.UUID] = None) -> Optional[Job]:
+        result = self.pop_multiple(worker_id, num_jobs=1)
+        return None if len(result) == 0 else result[0]
+
+    def pop_multiple(self, worker_id: Optional[uuid.UUID] = None, num_jobs: int = 1) -> Optional[Job]:
         """ 
         Claims and returns jobs from the self.  
         An optional worker id can be assigned. 
@@ -97,28 +102,28 @@ class JobQueue:
                         [id, end, worker]
             """
             cursor.execute(sql.SQL("""
-            WITH p AS (
-                SELECT id, priority FROM {queue_table}
-                    WHERE 
-                        queue = %(queue)s AND
-                        status = 0
-                    ORDER BY priority ASC
-                    LIMIT %(num_jobs)s FOR UPDATE SKIP LOCKED),
-            u AS (
-                UPDATE {queue_table} as q
-                    SET 
-                        status = 1,
-                        worker = %(worker_id)s,
-                        start_time = NOW(),
-                        update_time = NOW()
-                    FROM p
-                    WHERE p.id = q.id)
-            SELECT p.id AS id, p.priority AS priority, t.command AS command
-            FROM
-                p,
-                {data_table} as t
-            WHERE
-                p.id = t.id;""").format(
+WITH p AS (
+SELECT id, priority FROM {queue_table}
+    WHERE 
+        queue = %(queue)s AND
+        status = 0
+    ORDER BY priority ASC
+    LIMIT %(num_jobs)s FOR UPDATE SKIP LOCKED),
+u AS (
+UPDATE {queue_table} as q
+    SET 
+        status = 1,
+        worker = %(worker_id)s,
+        start_time = NOW(),
+        update_time = NOW()
+    FROM p
+    WHERE p.id = q.id)
+SELECT p.id AS id, p.priority AS priority, t.command AS command
+FROM
+p,
+{data_table} as t
+WHERE
+p.id = t.id;""").format(
                 queue_table=sql.Identifier(self._queue_table),
                 data_table=sql.Identifier(self._data_table),
             ), {
@@ -126,9 +131,13 @@ class JobQueue:
                 'worker_id': worker_id,
                 'num_jobs': num_jobs,
             })
-            return [Job(self, result[0], result[1], command=result[2]) for result in cursor.fetchall()]
+            return [Job(id=result[0], priority=result[1], command=result[2])
+                    for result in cursor.fetchall()]
 
-    def push(self, jobs: Iterator[Job]) -> None:
+    def push(self, job: Job) -> None:
+        self.push_multiple((job,))
+
+    def push_multiple(self, jobs: Iterator[Job]) -> None:
         """ Adds a job (dictionary) to the database jobqueue table.
             Input:  credentials
                     group: str, name of "queue" in the database
@@ -316,7 +325,7 @@ INSERT INTO {data_table} (id, parent, depth, command)
                         f"Job Queue: {job.uuid} exception thrown while marking as failed in jq_runner: {e}, {e2}!")
                     print(traceback.format_exc())
 
-    def _create_tables(self, drop_table: bool = True) -> None:
+    def _create_tables(self, drop_table: bool = False) -> None:
         """ Deletes and replaces or creates the current jobqueue table.
         """
         with CursorManager(self._credentials, autocommit=False) as cursor:
