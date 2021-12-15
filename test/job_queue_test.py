@@ -16,11 +16,10 @@ databases = json.loads(open(filename).read())
 @pytest.mark.parametrize("queue", [-768, -1, 0, 1, 1024, 8191])
 def test_functions(pooling, queue):
 
+    print('begin test *****')
+
     credentials = load_credentials('test')
-    if pooling:
-        credentials['pooling'] = True
-    else:
-        del credentials['pooling']
+    credentials['pooling'] = pooling
 
     queue = JobQueue(credentials, queue, check_table=True)
     queue.clear()
@@ -49,6 +48,16 @@ def test_functions(pooling, queue):
     df = queue.get_jobs_as_dataframe()
     print(df)
     assert len(df) == 7
+
+    j1 = queue.pop(num_jobs=1)
+    j2 = queue.pop(num_jobs=1)
+    j3 = queue.pop(num_jobs=3)
+    print(j1)
+    print(j2)
+    print(j3)
+
+    # res1 = jobqueue.functions.pop_jobs(credentials, table_name, "test", worker=1)
+    # res2 = jobqueue.functions.pop_jobs(credentials, table_name, "test", worker="abc")
 
     # jobqueue.functions.add_job(credentials, table_name, "test", {'id': 1})
     # jobqueue.functions.add_job(credentials, table_name, "test", {'id': 2})

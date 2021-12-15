@@ -1,15 +1,15 @@
 import sys
+from typing import Dict
 
 from psycopg2._psycopg import cursor
 
 from jobqueue.connect import connect, release_pooled_connection
-from typing import Dictionary
 
 
 class CursorManager:
 
-    def __init__(self, credentials: Dictionary[str, any], autocommit: bool = True):
-        self._credentials: Dictionary[str, any] = credentials
+    def __init__(self, credentials: Dict[str, any], autocommit: bool = True):
+        self._credentials: Dict[str, any] = credentials
         self._autocommit: bool = autocommit
         self._connection = None
         self._pooling: bool = False
@@ -34,24 +34,25 @@ class CursorManager:
         cursor = self._cursor
         self._cursor = None
 
-        if cursor is not None:
-            try:
-                cursor.close()
-            except Exception as e:
-                if exception_value is None:
-                    exception_value = sys.exc_info()
+        exception = exception_value
 
-        if connection is not None:
+        def do_and_capture(func):
+            nonlocal exception
             try:
-                if self._pooling:
-                    release_pooled_connection(self._credentials, connection)
-                else:
-                    connection.close()
+                func()
             except Exception as e:
-                if exception_value is None:
-                    exception_value = sys.exc_info()
+                if exception is None:
+                    exception = e
 
-        if exception_value is not None and exception_type is None:
-            raise exception_value
+        do_and_capture(lambda: cursor.close())
+
+        if self._pooling:
+            do_and_capture(lambda: release_pooled_connection(
+                self._credentials, connection))
+        else:
+            do_and_capture(lambda: connection.close())
+
+        if exception is not None:
+            raise exception
 
         return False

@@ -1,34 +1,28 @@
 import abc
 import json
 import os
+import platform
 import random
 import time
 import traceback
 import uuid
-from typing import Optional, Callable
-from typing import Dictionary, Tuple
-
-import json
-import os
-import platform
-import time
-import uuid
-from typing import Optional, Iterator
+from typing import Callable, Dict, Iterator, Optional, Tuple
 
 import pandas as pd
-from psycopg2 import sql
 import psycopg2
+from psycopg2 import sql
+import psycopg2.extras
 
-from cursor_manager import CursorManager
-
-from . import functions
 from .job import Job
+from .cursor_manager import CursorManager
+
+psycopg2.extras.register_uuid()
 
 
 class JobQueue:
 
     _database: str
-    _credentials: Dictionary[str, any]
+    _credentials: Dict[str, any]
     _queue_id: int
     # self.queue_table: str = _table_name + '_queue'
     _queue_table: str
@@ -36,15 +30,15 @@ class JobQueue:
 
     def __init__(
         self,
-        credentials: Dictionary[str, any],
+        credentials: Dict[str, any],
         queue: int = 0,
         check_table=False,
     ) -> None:
         """ Interface to the jobsque database table
-        database: str, name of the key in your .jobsself.json file.
+        database: str, name of the key in your .jobqueue.json file.
         queue: str, name of the queue you'd like to create or use.
         _table_name is use for testing only.  To change your table name use the
-        .jobsself.json file.
+        .jobqueue.json file.
         """
         credentials = credentials.copy()
         table_base_name = credentials['table_name']
@@ -52,47 +46,12 @@ class JobQueue:
 
         self._credentials = credentials
         self._queue_id = queue
-        self._queue_table = table_base_name + '_status'
+        self._queue_table = table_base_name + '_queue'
         self._data_table = table_base_name + '_data'
 
         # ensure table exists
         if check_table:
-            self._create_tables(self._credentials, self._table_name)
-
-    @property
-    def messages(self) -> int:
-        res = self.get_queue_length(
-            self._credentials, self._table_name, self._queue)
-        return res[0]
-
-    @property
-    def message_counts(self) -> Tuple[int, int, int, int]:
-        """ Returns the count of open, pending, and completed jobs for a given group.
-        Output: (num open, num pending, num completed)
-        """
-        with CursorManager(self._credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                    SELECT 
-                        (SELECT COUNT(*) FROM {queue_table} 
-                            WHERE queue = %s AND
-                                status = 0) AS open,
-                        (SELECT COUNT(*) FROM {queue_table} 
-                            WHERE queue = %s AND
-                                status = 1) AS running,
-                        (SELECT COUNT(*) FROM {queue_table} 
-                            WHERE queue = %s AND
-                                status = 2) AS done,
-                        (SELECT COUNT(*) FROM {queue_table} 
-                            WHERE queue = %s AND
-                                status = -1) AS failed
-                    ;
-                    """
-            ).format(
-                queue_table=sql.Identifier(self._queue_table)),
-                [self._queue_id])
-            records = cursor.fetchone()
-            return tuple(records)
+            self._create_tables()
 
     def clear(self) -> None:
         """ Clears all records for a given group.
@@ -102,7 +61,7 @@ class JobQueue:
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id])
 
-    def pop(self, worker: Optional[uuid.UUID] = None, num_jobs: int = 1) -> Optional[Job]:
+    def pop(self, worker_id: Optional[uuid.UUID] = None, num_jobs: int = 1) -> Optional[Job]:
         """ 
         Claims and returns jobs from the self.  
         An optional worker id can be assigned. 
@@ -153,15 +112,15 @@ class JobQueue:
                         start_time = NOW(),
                         update_time = NOW()
                     FROM p
-                    WHERE q.id = q.id)
-            SELECT p.id AS id, p.priority AS priority, t.config AS config
+                    WHERE p.id = q.id)
+            SELECT p.id AS id, p.priority AS priority, t.command AS command
             FROM
                 p,
                 {data_table} as t
             WHERE
                 p.id = t.id;""").format(
                 queue_table=sql.Identifier(self._queue_table),
-                data_table=sql.Identifier(self.data_Table),
+                data_table=sql.Identifier(self._data_table),
             ), {
                 'queue': self._queue_id,
                 'worker_id': worker_id,
@@ -180,25 +139,70 @@ class JobQueue:
         with CursorManager(self._credentials) as cursor:
             # cursor, insert_query, data, template=None, page_size=100
             command = sql.SQL("""
-                WITH t AS (SELECT * FROM (VALUES %s) AS t (queue, priority, id, parent, depth, command),
-                s AS (INSERT INTO {queue_table} (queue, priority, id)
+WITH t AS 
+    (SELECT queue::SMALLINT, priority::int, id::uuid, parent::uuid, depth::SMALLINT, command::jsonb FROM 
+        (VALUES %s)
+         AS t (queue, priority, id, parent, depth, command)),
+  s AS (INSERT INTO {queue_table} (queue, priority, id)
                     (SELECT queue, priority, id FROM t)
                     ON CONFLICT DO NOTHING)
-                INSERT INTO {data_table} (id, parent, depth, command)
-                    (SELECT id, parent, depth, command FROM t)
-                    ON CONFLICT DO NOTHING;""").format(
+INSERT INTO {data_table} (id, parent, depth, command)
+    (SELECT id, parent, depth, command FROM t)
+    ON CONFLICT DO NOTHING;""").format(
                 queue_table=sql.Identifier(self._queue_table),
                 data_table=sql.Identifier(self._data_table),
             )
             # TODO: remove queue id from here and put it into the command instead
+            print('jobs:')
+            for j in jobs:
+                print(
+                    f"({self._queue_id},{j.priority},{j.id}, {j.parent},{j.depth},{json.dumps(j.command, separators=(',', ':'))})")
+
             psycopg2.extras.execute_values(
                 cursor,
                 command,
-                ((self._queue_id, j.queue, j.priority, j.parent, j.depth, j.command)
-                 for j in jobs),
+                (
+                    (
+                        self._queue_id,
+                        j.priority,
+                        j.id,
+                        j.parent,
+                        j.depth,
+                        json.dumps(j.command, separators=(',', ':'))
+                    )
+                    for j in jobs),
                 template=None,
                 page_size=128,
             )
+
+    @property
+    def message_counts(self) -> Tuple[int, int, int, int]:
+        """ Returns the count of open, pending, and completed jobs for a given group.
+        Output: (num open, num pending, num completed)
+        """
+        with CursorManager(self._credentials) as cursor:
+            cursor.execute(sql.SQL(
+                """
+                    SELECT 
+                        (SELECT COUNT(*) FROM {queue_table} 
+                            WHERE queue = %s AND
+                                status = 0) AS open,
+                        (SELECT COUNT(*) FROM {queue_table} 
+                            WHERE queue = %s AND
+                                status = 1) AS running,
+                        (SELECT COUNT(*) FROM {queue_table} 
+                            WHERE queue = %s AND
+                                status = 2) AS done,
+                        (SELECT COUNT(*) FROM {queue_table} 
+                            WHERE queue = %s AND
+                                status = -1) AS failed
+                    ;
+                    """
+            ).format(
+                queue_table=sql.Identifier(self._queue_table)),
+                [self._queue_id])
+            records = cursor.fetchone()
+            return tuple(records)
 
     def fail_incomplete_jobs(self, interval='12 hours') -> None:
         """ Mark all incomplete jobs in a given group started more than {interval} ago as failed.
@@ -317,8 +321,14 @@ class JobQueue:
         """
         with CursorManager(self._credentials, autocommit=False) as cursor:
             if drop_table:
-                cursor.execute(sql.SQL("DROP TABLE IF EXISTS {};").format(
-                    sql.Identifier(table_name)))
+                cursor.execute(sql.SQL(
+                    """
+                    DROP TABLE IF EXISTS {queue_table};
+                    DROP TABLE IF EXISTS {data_table};
+                    """).format(
+                    queue_table=sql.Identifier(self._queue_table),
+                    data_table=sql.Identifier(self._data_table),
+                ))
 
             cursor.execute(sql.SQL("""
             CREATE TABLE IF NOT EXISTS {queue_table} (
@@ -332,8 +342,8 @@ class JobQueue:
                 error_count   smallint,
                 error         text
             );
-            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, priority) WHERE status = 0;
-            CREATE INDEX IF NOT EXISTS ON {queue_table} (queue, status, update_time) WHERE status <> 0;
+            CREATE INDEX IF NOT EXISTS {priority_index} ON {queue_table} (queue, priority) WHERE status = 0;
+            CREATE INDEX IF NOT EXISTS {update_index} ON {queue_table} (queue, status, update_time) WHERE status <> 0;
 
             CREATE TABLE IF NOT EXISTS {data_table} (
                 id            uuid NOT NULL PRIMARY KEY,
@@ -341,44 +351,15 @@ class JobQueue:
                 depth         smallint,
                 command       jsonb
             );
-            CREATE INDEX IF NOT EXISTS ON {data_table} (parent, id) WHERE PARENT IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS {parent_index} ON {data_table} (parent, id) WHERE PARENT IS NOT NULL;
             """).format(
                 queue_table=sql.Identifier(self._queue_table),
                 data_table=sql.Identifier(self._data_table),
+                priority_index=sql.Identifier(
+                    self._queue_table + '_priority_idx'),
+                update_index=sql.Identifier(self._queue_table + '_update_idx'),
+                parent_index=sql.Identifier(self._data_table + '_parent_idx'),
             ))
-
-            cursor.connection.commit()
-
-    def _push_jobs(self, jobs: Iterator[Job]) -> None:
-        """ Adds a job (dictionary) to the database jobqueue table.
-            Input:  credentials
-                    group: str, name of "queue" in the database
-                    job: dict, must be able to call json.dumps
-            Output: None
-        """
-        # https://stackoverflow.com/questions/8134602/psycopg2-insert-multiple-rows-with-one-query
-        with CursorManager(self._credentials) as cursor:
-            # cursor, insert_query, data, template=None, page_size=100
-            command = sql.SQL("""
-                WITH t AS (SELECT * FROM (VALUES %s) AS t (queue, priority, id, parent, depth, command),
-                s AS (INSERT INTO {queue_table} (queue, priority, id)
-                    (SELECT queue, priority, id FROM t)
-                    ON CONFLICT DO NOTHING)
-                INSERT INTO {data_table} (id, parent, depth, command)
-                    (SELECT id, parent, depth, command FROM t)
-                    ON CONFLICT DO NOTHING;""").format(
-                queue_table=sql.Identifier(self._queue_table),
-                data_table=sql.Identifier(self._data_table),
-            )
-            # TODO: remove queue id from here and put it into the command instead
-            psycopg2.extras.execute_values(
-                cursor,
-                command,
-                ((self._queue_id, j.priority, j.parent, j.depth, j.command)
-                 for j in jobs),
-                template=None,
-                page_size=128,
-            )
 
             cursor.connection.commit()
 
@@ -439,19 +420,24 @@ class JobQueue:
                     s.worker as worker,
                     s.error_count as error_count,
                     s.error as error,
-                    d.quparenteue as parent,
+                    d.parent as parent,
                     d.depth as depth,
                     d.command as command
                 FROM 
                     {queue_table} AS s,
                     {data_table} AS d
                 WHERE
-                    s.id = d.id;
+                    s.id = d.id AND
+                    queue = %(queue)s;
                 """).format(
                 queue_table=sql.Identifier(self._queue_table),
                 data_table=sql.Identifier(self._data_table))
 
-            return pd.read_sql(command, con=cursor.connection)
+            return pd.read_sql(
+                command,
+                params={'queue': self._queue_id},
+                con=cursor.connection,
+            )
 
     def get_queue_length(self) -> int:
         """ Returns the count of open jobs for a given group.

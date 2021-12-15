@@ -29,7 +29,7 @@ _connection_pools: Dict[int, any] = {}
 
 
 def load_credentials(database: str) -> Dict[str, any]:
-    filename = os.path.join(os.environ['HOME'], ".jobself.json")
+    filename = os.path.join(os.environ['HOME'], ".jobqueue.json")
     try:
         data = json.loads(open(filename).read())
         return data[database]
@@ -48,10 +48,8 @@ def _get_pool(credentials: Dict[int, any]) -> SimpleConnectionPool:
     if credential_id in _connection_pools:
         pool = _connection_pools[credential_id]
     else:
-        if 'pooling' in credentials:
-            credentials = credentials.copy()
-            del credentials['pooling']
-        pool = SimpleConnectionPool(minconn=0, maxconn=2, **credentials)
+        inner_credentials = _extract_inner_credentials(credentials)
+        pool = SimpleConnectionPool(minconn=0, maxconn=2, **inner_credentials)
         _connection_pools[credential_id] = pool
     return pool
 
@@ -70,15 +68,16 @@ def connect(credentials: Dict[int, any]) -> any:
     if pooling:
         return acquire_pooled_connection(credentials)
     else:
-        initial_wait_max = credentials.get('initial_wait_max', 60)
-        min_wait = credentials.get('min_wait', 0.0)
-        max_wait = credentials.get('max_wait', 60 * 60)
+        initial_wait_max = credentials.get('initial_wait_max', 120)
+        min_wait = credentials.get('min_wait', 0.5)
+        max_wait = credentials.get('max_wait', 2 * 60 * 60)
         max_attempts = credentials.get('max_attempts', 10000)
         attempts = 0
         while attempts < max_attempts:
             wait_time = 0.0
             try:
-                connection = psycopg2.connect(**credentials)
+                inner_credentials = _extract_inner_credentials(credentials)
+                connection = psycopg2.connect(**inner_credentials)
                 return connection
             except psycopg2.OperationalError as e:
                 print(
@@ -92,3 +91,8 @@ def connect(credentials: Dict[int, any]) -> any:
                 if attempts >= max_attempts or wait_time >= max_wait:
                     raise e
                 time.sleep(sleep_time)
+
+
+def _extract_inner_credentials(credentials: Dict[int, any]) -> Dict[int, any]:
+    return {k: credentials[k] for k in (
+        'host', 'database', 'user', 'password')}

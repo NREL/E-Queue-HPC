@@ -1,17 +1,17 @@
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from jobqueue.job_queue import JobQueue
 
-from .job_status import JobStatus
+def _make_priority():
+    return (int(datetime.utcnow().timestamp()) - 1639549880)
 
 
 @dataclass
 class Job:
-    id: Optional[uuid.UUID] = None  # = field(default_factory=uuid.uuid4)
-    priority: Optional[int] = None
+    id: Optional[uuid.UUID] = field(default_factory=uuid.uuid4)
+    priority: Optional[int] = field(default_factory=_make_priority)
 
     run_count: int = 0
     start_time: Optional[datetime] = None
