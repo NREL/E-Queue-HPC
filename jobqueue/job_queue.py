@@ -5,7 +5,6 @@ import platform
 import random
 import time
 import traceback
-import uuid
 from typing import Callable, Dict, Iterator, Optional, Tuple
 
 import pandas as pd
@@ -15,8 +14,6 @@ import psycopg2.extras
 
 from .job import Job
 from .cursor_manager import CursorManager
-
-psycopg2.extras.register_uuid()
 
 
 class JobQueue:
@@ -62,11 +59,11 @@ class JobQueue:
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id])
 
-    def pop(self, worker_id: Optional[uuid.UUID] = None) -> Optional[Job]:
+    def pop(self, worker_id: Optional[int] = None) -> Optional[Job]:
         result = self.pop_multiple(worker_id, num_jobs=1)
         return None if len(result) == 0 else result[0]
 
-    def pop_multiple(self, worker_id: Optional[uuid.UUID] = None, num_jobs: int = 1) -> Optional[Job]:
+    def pop_multiple(self, worker_id: Optional[int] = None, num_jobs: int = 1) -> Optional[Job]:
         """ 
         Claims and returns jobs from the self.  
         An optional worker id can be assigned. 
@@ -147,36 +144,32 @@ p.id = t.id;""").format(
         # https://stackoverflow.com/questions/8134602/psycopg2-insert-multiple-rows-with-one-query
         with CursorManager(self._credentials) as cursor:
             # cursor, insert_query, data, template=None, page_size=100
-            command = sql.SQL("""
-WITH t AS 
-    (SELECT queue::SMALLINT, priority::int, id::uuid, parent::uuid, depth::SMALLINT, command::jsonb FROM 
-        (VALUES %s)
-         AS t (queue, priority, id, parent, depth, command)),
-  s AS (INSERT INTO {queue_table} (queue, priority, id)
-                    (SELECT queue, priority, id FROM t)
-                    ON CONFLICT DO NOTHING)
-INSERT INTO {data_table} (id, parent, depth, command)
-    (SELECT id, parent, depth, command FROM t)
-    ON CONFLICT DO NOTHING;""").format(
+            command = sql.SQL("""WITH t AS (
+    SELECT 
+        nextval({queue_table_id_sequence}::regclass) as id, 
+        depth::SMALLINT, 
+        priority::int, 
+        parent::bigint, 
+        command::jsonb
+        FROM (VALUES %s) AS t (depth, priority, parent, command)),
+    v AS (INSERT INTO {queue_table} (id, queue, priority) (SELECT id, {queue}, priority FROM t))
+    INSERT INTO {data_table} (id, parent, depth, command)
+        (SELECT id, parent, depth, command FROM t) RETURNING id;""").format(
+                queue_table_id_sequence=sql.Literal(
+                    self._queue_table + '_id_seq'),
+                queue=sql.Literal(self._queue_id),
                 queue_table=sql.Identifier(self._queue_table),
                 data_table=sql.Identifier(self._data_table),
             )
-            # TODO: remove queue id from here and put it into the command instead
-            print('jobs:')
-            for j in jobs:
-                print(
-                    f"({self._queue_id},{j.priority},{j.id}, {j.parent},{j.depth},{json.dumps(j.command, separators=(',', ':'))})")
 
             psycopg2.extras.execute_values(
                 cursor,
                 command,
                 (
                     (
-                        self._queue_id,
-                        j.priority,
-                        j.id,
-                        j.parent,
                         j.depth,
+                        j.priority,
+                        j.parent,
                         json.dumps(j.command, separators=(',', ':'))
                     )
                     for j in jobs),
@@ -271,11 +264,11 @@ INSERT INTO {data_table} (id, parent, depth, command)
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id, interval])
 
-    def run_worker(self, handler: Callable[[uuid.UUID, Job], None], wait_until_exit=15 * 60,
+    def run_worker(self, handler: Callable[[int, Job], None], wait_until_exit=15 * 60,
                    maximum_waiting_time=5 * 60):
         print(f"Job Queue: Starting...")
 
-        worker_id = uuid.uuid4()
+        worker_id = int(datetime.utcnow().timestamp() * 8192)
         wait_start = None
         wait_bound = 1.0
         while True:
@@ -307,22 +300,22 @@ INSERT INTO {data_table} (id, parent, depth, command)
             try:
                 wait_start = None
 
-                print(f"Job Queue: {job.uuid} running...")
+                print(f"Job Queue: {job.id} running...")
 
                 handler(worker_id, job)  # handle the message
                 # Mark the job as complete in the self.
                 self.mark_job_complete(job)
 
-                print(f"Job Queue: {job.uuid} done.")
+                print(f"Job Queue: {job.id} done.")
             except Exception as e:
                 print(
-                    f"Job Queue: {job.uuid} unhandled exception {e} in jq_runner.")
+                    f"Job Queue: {job.id} unhandled exception {e} in jq_runner.")
                 print(traceback.format_exc())
                 try:
                     self.mark_job_failed(job, str(e))
                 except Exception as e2:
                     print(
-                        f"Job Queue: {job.uuid} exception thrown while marking as failed in jq_runner: {e}, {e2}!")
+                        f"Job Queue: {job.id} exception thrown while marking as failed in jq_runner: {e}, {e2}!")
                     print(traceback.format_exc())
 
     def _create_tables(self, drop_table: bool = False) -> None:
@@ -341,13 +334,13 @@ INSERT INTO {data_table} (id, parent, depth, command)
 
             cursor.execute(sql.SQL("""
             CREATE TABLE IF NOT EXISTS {queue_table} (
+                id            bigserial NOT NULL PRIMARY KEY,
                 queue         smallint NOT NULL,
                 status        smallint NOT NULL DEFAULT 0,
                 priority      int NOT NULL,
-                id            uuid NOT NULL PRIMARY KEY,
                 start_time    timestamp,
                 update_time   timestamp,
-                worker        uuid,
+                worker        bigint,
                 error_count   smallint,
                 error         text
             );
@@ -355,8 +348,8 @@ INSERT INTO {data_table} (id, parent, depth, command)
             CREATE INDEX IF NOT EXISTS {update_index} ON {queue_table} (queue, status, update_time) WHERE status <> 0;
 
             CREATE TABLE IF NOT EXISTS {data_table} (
-                id            uuid NOT NULL PRIMARY KEY,
-                parent        uuid,
+                id            bigint NOT NULL PRIMARY KEY,
+                parent        bigint,
                 depth         smallint,
                 command       jsonb
             );
@@ -372,7 +365,7 @@ INSERT INTO {data_table} (id, parent, depth, command)
 
             cursor.connection.commit()
 
-    def update_job(self, job_id: uuid.UUID) -> None:
+    def update_job(self, job_id: int) -> None:
         """ While a job is being worked on, the worker can periodically let the queue know it is still working on the
             job (instead of crashed or frozen).
         """
@@ -383,9 +376,9 @@ INSERT INTO {data_table} (id, parent, depth, command)
                     WHERE id = %s;
                     """).format(
                 queue_table=sql.Identifier(self._queue_table)),
-                [str(job_id)])
+                [job_id])
 
-    def mark_job_complete(self, job_id: uuid.UUID) -> None:
+    def mark_job_complete(self, job_id: int) -> None:
         """ When a job is finished, this function will mark the status as done.
         """
         with CursorManager(self._credentials) as cursor:
@@ -396,9 +389,9 @@ INSERT INTO {data_table} (id, parent, depth, command)
                     WHERE id = %s;
                     """).format(
                 queue_table=sql.Identifier(self._queue_table)),
-                [str(job_id)])
+                [job_id])
 
-    def mark_job_failed(self, job_id: uuid.UUID, error: str) -> None:
+    def mark_job_failed(self, job_id: int, error: str) -> None:
         """ When a job failed, this function will mark the status as failed.
         """
         with CursorManager(self._credentials) as cursor:
@@ -411,7 +404,7 @@ INSERT INTO {data_table} (id, parent, depth, command)
                     WHERE id = %s;
                     """).format(
                 queue_table=sql.Identifier(self._queue_table)),
-                [error, str(job_id)])
+                [error, job_id])
 
     def get_jobs_as_dataframe(self) -> pd.DataFrame:
         """ Returns all queues as a dataframe.

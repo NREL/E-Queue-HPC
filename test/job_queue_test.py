@@ -55,10 +55,10 @@ def test_functions(pooling=False, queue=0):
 
     j1 = queue.pop()
 
-    worker_id_1 = uuid.uuid4()
+    worker_id_1 = 0
     j2 = queue.pop(worker_id=worker_id_1)
 
-    worker_id_2 = uuid.uuid4()
+    worker_id_2 = 1
     j3 = queue.pop_multiple(worker_id_2, num_jobs=3)
     print(j1)
     print(j2)
