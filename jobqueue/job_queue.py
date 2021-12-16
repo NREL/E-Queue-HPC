@@ -72,32 +72,6 @@ class JobQueue:
         host = platform.node()
 
         with CursorManager(self._credentials) as cursor:
-            """
-            + remove entry from priority queue
-            + set start time
-            + set worker info (optional...)
-
-            queue
-            priority
-            job id
-            worker id, start time
-
-            options:
-                + single table: [id, queue, priority, worker, start, update, end, retries]
-                    + get highest priority
-                    + update set priority = NULL, worker id, start time
-                    + later, update and set end time
-                + two tables: [id, queue, priority], [id, queue, worker, start, update, end, retries]
-                    + get and delete highest priority
-                    + insert start record into log table [start, worker, end]
-                    + later, insert finish record or update start record
-                + three tables: [id, queue, priority]
-                    + get and delete highest priority
-                    + insert start record
-                        [id, start, worker]
-                    + later, insert finish record
-                        [id, end, worker]
-            """
             cursor.execute(sql.SQL("""
 WITH p AS (
 SELECT id, priority FROM {queue_table}
@@ -145,16 +119,16 @@ p.id = t.id;""").format(
         with CursorManager(self._credentials) as cursor:
             # cursor, insert_query, data, template=None, page_size=100
             command = sql.SQL("""WITH t AS (
-    SELECT 
-        nextval({queue_table_id_sequence}::regclass) as id, 
-        depth::SMALLINT, 
-        priority::int, 
-        parent::bigint, 
-        command::jsonb
-        FROM (VALUES %s) AS t (depth, priority, parent, command)),
-    v AS (INSERT INTO {queue_table} (id, queue, priority) (SELECT id, {queue}, priority FROM t))
-    INSERT INTO {data_table} (id, parent, depth, command)
-        (SELECT id, parent, depth, command FROM t) RETURNING id;""").format(
+SELECT 
+    nextval({queue_table_id_sequence}::regclass) as id, 
+    depth::SMALLINT, 
+    priority::int, 
+    parent::bigint, 
+    command::jsonb
+    FROM (VALUES %s) AS t (depth, priority, parent, command)),
+v AS (INSERT INTO {queue_table} (id, queue, priority) (SELECT id, {queue}, priority FROM t))
+INSERT INTO {data_table} (id, parent, depth, command)
+    (SELECT id, parent, depth, command FROM t) RETURNING id;""").format(
                 queue_table_id_sequence=sql.Literal(
                     self._queue_table + '_id_seq'),
                 queue=sql.Literal(self._queue_id),
@@ -183,24 +157,20 @@ p.id = t.id;""").format(
         Output: (num open, num pending, num completed)
         """
         with CursorManager(self._credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                    SELECT 
-                        (SELECT COUNT(*) FROM {queue_table} 
-                            WHERE queue = %s AND
-                                status = 0) AS open,
-                        (SELECT COUNT(*) FROM {queue_table} 
-                            WHERE queue = %s AND
-                                status = 1) AS running,
-                        (SELECT COUNT(*) FROM {queue_table} 
-                            WHERE queue = %s AND
-                                status = 2) AS done,
-                        (SELECT COUNT(*) FROM {queue_table} 
-                            WHERE queue = %s AND
-                                status = -1) AS failed
-                    ;
-                    """
-            ).format(
+            cursor.execute(sql.SQL("""
+SELECT 
+    (SELECT COUNT(*) FROM {queue_table} 
+        WHERE queue = %s AND
+            status = 0) AS open,
+    (SELECT COUNT(*) FROM {queue_table} 
+        WHERE queue = %s AND
+            status = 1) AS running,
+    (SELECT COUNT(*) FROM {queue_table} 
+        WHERE queue = %s AND
+            status = 2) AS done,
+    (SELECT COUNT(*) FROM {queue_table} 
+        WHERE queue = %s AND
+            status = -1) AS failed;""").format(
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id])
             records = cursor.fetchone()
@@ -210,15 +180,12 @@ p.id = t.id;""").format(
         """ Mark all incomplete jobs in a given group started more than {interval} ago as failed.
         """
         with CursorManager(self._credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                UPDATE {queue_table}
-                    SET update_time = NOW()
-                    WHERE queue = %s
-                        AND status = 1
-                        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
-                """
-            ).format(
+            cursor.execute(sql.SQL("""
+UPDATE {queue_table}
+    SET update_time = NOW()
+    WHERE queue = %s
+        AND status = 1
+        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;""").format(
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id, interval])
 
@@ -227,20 +194,17 @@ p.id = t.id;""").format(
         """
 
         with CursorManager(self._credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                UPDATE {queue_table}
-                    SET 
-                        status = 0,
-                        start_time = NULL, 
-                        update_time = NULL, 
-                        error = NULL,
-                        error_count = COALESCE(error_count, 0) + 1
-                    WHERE queue = %s
-                        AND status = 1
-                        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
-                """
-            ).format(
+            cursor.execute(sql.SQL("""
+UPDATE {queue_table}
+    SET 
+        status = 0,
+        start_time = NULL, 
+        update_time = NULL, 
+        error = NULL,
+        error_count = COALESCE(error_count, 0) + 1
+    WHERE queue = %s
+        AND status = 1
+        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;""").format(
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id, interval])
 
@@ -248,19 +212,16 @@ p.id = t.id;""").format(
         """ Mark all failed jobs in a given group started more than {interval} ago as open.
         """
         with CursorManager(self._credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                        UPDATE {queue_table}
-                            SET status = 0,
-                                start_time = NULL, 
-                                update_time = NULL, 
-                                end_time = NULL, 
-                                error = NULL
-                            WHERE queue = %s
-                                AND status = -1
-                                AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;
-                        """
-            ).format(
+            cursor.execute(sql.SQL("""
+UPDATE {queue_table}
+    SET status = 0,
+        start_time = NULL, 
+        update_time = NULL, 
+        end_time = NULL, 
+        error = NULL
+    WHERE queue = %s
+        AND status = -1
+        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;""").format(
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id, interval])
 
@@ -323,38 +284,35 @@ p.id = t.id;""").format(
         """
         with CursorManager(self._credentials, autocommit=False) as cursor:
             if drop_table:
-                cursor.execute(sql.SQL(
-                    """
-                    DROP TABLE IF EXISTS {queue_table};
-                    DROP TABLE IF EXISTS {data_table};
-                    """).format(
+                cursor.execute(sql.SQL("""
+DROP TABLE IF EXISTS {queue_table};
+DROP TABLE IF EXISTS {data_table};""").format(
                     queue_table=sql.Identifier(self._queue_table),
                     data_table=sql.Identifier(self._data_table),
                 ))
 
             cursor.execute(sql.SQL("""
-            CREATE TABLE IF NOT EXISTS {queue_table} (
-                id            bigserial NOT NULL PRIMARY KEY,
-                queue         smallint NOT NULL,
-                status        smallint NOT NULL DEFAULT 0,
-                priority      int NOT NULL,
-                start_time    timestamp,
-                update_time   timestamp,
-                worker        bigint,
-                error_count   smallint,
-                error         text
-            );
-            CREATE INDEX IF NOT EXISTS {priority_index} ON {queue_table} (queue, priority) WHERE status = 0;
-            CREATE INDEX IF NOT EXISTS {update_index} ON {queue_table} (queue, status, update_time) WHERE status <> 0;
+CREATE TABLE IF NOT EXISTS {queue_table} (
+    id            bigserial NOT NULL PRIMARY KEY,
+    queue         smallint NOT NULL,
+    status        smallint NOT NULL DEFAULT 0,
+    priority      int NOT NULL,
+    start_time    timestamp,
+    update_time   timestamp,
+    worker        bigint,
+    error_count   smallint,
+    error         text
+);
+CREATE INDEX IF NOT EXISTS {priority_index} ON {queue_table} (queue, priority) WHERE status = 0;
+CREATE INDEX IF NOT EXISTS {update_index} ON {queue_table} (queue, status, update_time) WHERE status <> 0;
 
-            CREATE TABLE IF NOT EXISTS {data_table} (
-                id            bigint NOT NULL PRIMARY KEY,
-                parent        bigint,
-                depth         smallint,
-                command       jsonb
-            );
-            CREATE INDEX IF NOT EXISTS {parent_index} ON {data_table} (parent, id) WHERE PARENT IS NOT NULL;
-            """).format(
+CREATE TABLE IF NOT EXISTS {data_table} (
+    id            bigint NOT NULL PRIMARY KEY,
+    parent        bigint,
+    depth         smallint,
+    command       jsonb
+);
+CREATE INDEX IF NOT EXISTS {parent_index} ON {data_table} (parent, id) WHERE PARENT IS NOT NULL;""").format(
                 queue_table=sql.Identifier(self._queue_table),
                 data_table=sql.Identifier(self._data_table),
                 priority_index=sql.Identifier(
@@ -396,13 +354,12 @@ p.id = t.id;""").format(
         """
         with CursorManager(self._credentials) as cursor:
             cursor.execute(sql.SQL("""
-                    UPDATE {queue_table}
-                    SET status = -1,
-                        update_time = NOW(),
-                        error = %s,
-                        error_count = COALESCE(error_count, 0) + 1
-                    WHERE id = %s;
-                    """).format(
+UPDATE {queue_table}
+SET status = -1,
+    update_time = NOW(),
+    error = %s,
+    error_count = COALESCE(error_count, 0) + 1
+WHERE id = %s;""").format(
                 queue_table=sql.Identifier(self._queue_table)),
                 [error, job_id])
 
@@ -410,28 +367,26 @@ p.id = t.id;""").format(
         """ Returns all queues as a dataframe.
         """
         with CursorManager(self._credentials) as cursor:
-            command = sql.SQL(
-                """
-                SELECT 
-                    s.queue as queue,
-                    s.status as status,
-                    s.priority as priority,
-                    s.id as id,
-                    s.start_time as start_time,
-                    s.update_time as update_time,
-                    s.worker as worker,
-                    s.error_count as error_count,
-                    s.error as error,
-                    d.parent as parent,
-                    d.depth as depth,
-                    d.command as command
-                FROM 
-                    {queue_table} AS s,
-                    {data_table} AS d
-                WHERE
-                    s.id = d.id AND
-                    queue = %(queue)s;
-                """).format(
+            command = sql.SQL("""
+SELECT 
+    s.queue as queue,
+    s.status as status,
+    s.priority as priority,
+    s.id as id,
+    s.start_time as start_time,
+    s.update_time as update_time,
+    s.worker as worker,
+    s.error_count as error_count,
+    s.error as error,
+    d.parent as parent,
+    d.depth as depth,
+    d.command as command
+FROM 
+    {queue_table} AS s,
+    {data_table} AS d
+WHERE
+    s.id = d.id AND
+    queue = %(queue)s;""").format(
                 queue_table=sql.Identifier(self._queue_table),
                 data_table=sql.Identifier(self._data_table))
 
@@ -446,14 +401,11 @@ p.id = t.id;""").format(
         Output: int, number of open jobs
         """
         with CursorManager(self._credentials) as cursor:
-            cursor.execute(sql.SQL(
-                """
-                SELECT COUNT(*) FROM {queue_table} 
-                    WHERE 
-                        queue = %s AND
-                        status = 0;
-                """
-            ).format(
+            cursor.execute(sql.SQL("""
+SELECT COUNT(*) FROM {queue_table} 
+    WHERE 
+        queue = %s AND
+        status = 0;""").format(
                 queue_table=sql.Identifier(self._queue_table)),
                 [self._queue_id])
             return cursor.fetchone()
