@@ -329,10 +329,9 @@ CREATE INDEX IF NOT EXISTS {parent_index} ON {data_table} (parent, id) WHERE PAR
         """
         with CursorManager(self._credentials) as cursor:
             cursor.execute(sql.SQL("""
-                    UPDATE {queue_table}
-                    SET update_time = NOW()
-                    WHERE id = %s;
-                    """).format(
+UPDATE {queue_table}
+SET update_time = NOW()
+WHERE id = %s;""").format(
                 queue_table=sql.Identifier(self._queue_table)),
                 [job_id])
 
@@ -341,11 +340,10 @@ CREATE INDEX IF NOT EXISTS {parent_index} ON {data_table} (parent, id) WHERE PAR
         """
         with CursorManager(self._credentials) as cursor:
             cursor.execute(sql.SQL("""
-                    UPDATE {queue_table}
-                    SET status = 2,
-                        update_time = NOW()
-                    WHERE id = %s;
-                    """).format(
+UPDATE {queue_table}
+SET status = 2,
+    update_time = NOW()
+WHERE id = %s;""").format(
                 queue_table=sql.Identifier(self._queue_table)),
                 [job_id])
 
