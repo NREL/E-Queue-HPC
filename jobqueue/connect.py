@@ -1,5 +1,5 @@
 """
-Author: Monte Lunacek
+Author: Monte Lunacek, Charles Tripp
 
 
     This file contains basic functions that execute SQL commands on a

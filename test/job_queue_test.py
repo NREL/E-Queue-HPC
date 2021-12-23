@@ -1,7 +1,10 @@
 import json
 import os
 import random
+from typing import Dict, List, Tuple
 import uuid
+
+import pandas
 
 import jobqueue
 import pytest
@@ -78,6 +81,13 @@ def test_functions(pooling=False, queue=0):
 
     queue_length = queue.get_queue_length()
     print(queue_length)
+
+
+def test_single_worker(pooling=False, queue=0):
+    job_map: Dict[int, Job] = {}
+    jobs_in_progress: List[Tuple[int, id, Job]] = []
+    jobs_completed = []
+    jobs_in_error = []
 
 
 test_functions()

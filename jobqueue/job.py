@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from jobqueue.job_status import JobStatus
+
 
 def _make_priority():
     return (int(datetime.utcnow().timestamp()) - 1639549880)
@@ -12,14 +14,13 @@ def _make_priority():
 class Job:
     id: Optional[int] = None
     priority: Optional[int] = field(default_factory=_make_priority)
+    command: any = None
 
-    run_count: int = 0
-    start_time: Optional[datetime] = None
-    update_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    worker: Optional[uuid.UUID] = None
+    error_count: int = 0
     error: Optional[str] = None
 
-    parent: Optional[uuid.UUID] = None
-    depth: int = 0
-    command: any = None
+    status: JobStatus = JobStatus.Queued
+
+    start_time: Optional[datetime] = None
+    update_time: Optional[datetime] = None
+    worker: Optional[int] = None
