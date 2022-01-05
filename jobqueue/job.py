@@ -12,7 +12,7 @@ def _make_priority():
 
 @dataclass
 class Job:
-    id: Optional[int] = None
+    id: Optional[uuid.UUID] = field(default_factory=uuid.uuid4)
     priority: Optional[int] = field(default_factory=_make_priority)
     command: any = None
 
