@@ -251,7 +251,7 @@ def fetch_job(
                                           FROM {} 
                                           WHERE status IS NULL  
                                             AND groupname = %s
-                                          ORDER BY priority ASC, RANDOM()
+                                          ORDER BY priority ASC
                                           LIMIT 1 FOR UPDATE SKIP LOCKED)
                             RETURNING uuid, username, config, groupname, host, status, worker, creation_time, priority, 
                                 start_time, update_time, end_time, depth, wall_time, retry_count, jobid;
