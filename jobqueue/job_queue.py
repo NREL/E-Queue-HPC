@@ -25,15 +25,13 @@ psycopg2.extras.register_uuid()
 
 class JobQueue:
 
-    _database: str
     _credentials: Dict[str, any]
     _queue_id: int
 
     _status_table: str
     _data_table: str
 
-    def __init__(
-        self,
+    def __init__(self,
         credentials: Dict[str, any],
         queue: int = 0,
         check_table=False,
@@ -66,8 +64,7 @@ class JobQueue:
                 status_table=sql.Identifier(self._status_table)),
                 [self._queue_id])
 
-    def pop(
-        self,
+    def pop(self,
         n: Optional[int] = None,
         worker_id: Optional[uuid.UUID] = None,
     ) -> Union[List[Job], Optional[Job]]:
@@ -210,8 +207,7 @@ WHERE id = %s;""").format(
             ),
                 [error, job.id])
 
-    def run_worker(
-        self,
+    def work_loop(self,
         handler: Callable[[uuid.UUID, Job], None],
         worker_id: Optional[uuid.UUID] = None,
         wait_until_exit=15 * 60,
@@ -259,13 +255,13 @@ WHERE id = %s;""").format(
                 print(f"Job Queue: {job.id} done.")
             except Exception as e:
                 print(
-                    f"Job Queue: {job.id} unhandled exception {e} in jq_runner.")
+                    f"Job Queue: {job.id} unhandled exception {e} in work_loop.")
                 print(traceback.format_exc())
                 try:
                     self.fail(job, str(e))
                 except Exception as e2:
                     print(
-                        f"Job Queue: {job.id} exception thrown while marking as failed in jq_runner: {e}, {e2}!")
+                        f"Job Queue: {job.id} exception thrown while marking as failed in work_loop: {e}, {e2}!")
                     print(traceback.format_exc())
 
     @property
