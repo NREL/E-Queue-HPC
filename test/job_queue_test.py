@@ -68,15 +68,15 @@ def test_functions(pooling=False, queue=0):
     print(j2)
     print(j3)
 
-    queue.complete(j1.id)
+    queue.complete(j1)
     df = queue.get_jobs_as_dataframe()
     print(df)
 
-    queue.fail(j2.id, 'test failure')
+    queue.fail(j2, 'test failure')
     df = queue.get_jobs_as_dataframe()
     print(df)
 
-    queue.update(j3[0].id)
+    queue.update(j3[0])
     df = queue.get_jobs_as_dataframe()
     print(df)
 
@@ -86,7 +86,7 @@ def test_functions(pooling=False, queue=0):
     queue.clear()
 
 
-def test_single_worker(pooling=False, queue=0, total_actions=10000):
+def test_single_worker(pooling=False, queue=0, total_actions=100):
     job_map: Dict[uuid.UUID, Job] = {}
     # jobs_claimed: List[Tuple[int, Job]] = []
     claimed_heap: List[Tuple[int, Job]] = []
@@ -104,12 +104,12 @@ def test_single_worker(pooling=False, queue=0, total_actions=10000):
 
     worker_id = uuid.uuid4()
 
-    def pop_job():
-        while len(claimed_heap) > 0:
-            j = heapq.heappop(claimed_heap)[1]
-            if j.status == JobStatus.Claimed:
-                return j
-        return None
+    # def pop_job():
+    #     while len(claimed_heap) > 0:
+    #         j = heapq.heappop(claimed_heap)[1]
+    #         if j.status == JobStatus.Claimed:
+    #             return j
+    #     return None
 
     max_trend_length = 10000
     max_push = 16
@@ -199,14 +199,16 @@ def test_single_worker(pooling=False, queue=0, total_actions=10000):
         total_actions -= max(num_to_push - 1, 0)
         jobs = [Job(priority=random.randint(-int(2 ** 15), int(2**15)-1))
                 for _ in range(num_to_push)]
-        for j in jobs:
-            job_map[j.id] = j
+        
 
         if random.random() < single_pop_fraction:
             for j in jobs:
                 queue.push(j)
         else:
             queue.push(jobs)
+
+        for j in jobs:
+            job_map[j.id] = j
 
         jobs_queued += len(jobs)
         continue

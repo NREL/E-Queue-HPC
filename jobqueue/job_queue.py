@@ -142,10 +142,7 @@ SELECT
     command::jsonb
     FROM (VALUES %s) AS t (id, priority, command)),
 v AS (INSERT INTO {status_table} (id, queue, priority) (SELECT id, {queue}, priority FROM t))
-INSERT INTO {data_table} (id, command)
-    (SELECT id, command FROM t) RETURNING id;""").format(
-                status_table_id_sequence=sql.Literal(
-                    self._status_table + '_id_seq'),
+INSERT INTO {data_table} (id, command) (SELECT id, command FROM t);""").format(
                 queue=sql.Literal(self._queue_id),
                 status_table=sql.Identifier(self._status_table),
                 data_table=sql.Identifier(self._data_table),
@@ -423,7 +420,6 @@ SELECT
     s.error_count as error_count,
     s.error as error,
     d.parent as parent,
-    d.depth as depth,
     d.command as command
 FROM 
     {status_table} AS s,
