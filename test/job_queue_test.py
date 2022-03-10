@@ -6,10 +6,7 @@ import uuid
 import numpy
 
 import heapq
-import pandas
 
-import jobqueue
-import pytest
 from jobqueue.connect import load_credentials
 from jobqueue.job import Job
 from jobqueue.job_queue import JobQueue

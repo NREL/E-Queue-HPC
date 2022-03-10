@@ -20,7 +20,7 @@ import json
 import os
 import random
 import time
-from typing import Callable, Dict
+from typing import Dict
 
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
@@ -33,7 +33,7 @@ def load_credentials(database: str) -> Dict[str, any]:
     try:
         data = json.loads(open(filename).read())
         return data[database]
-    except KeyError as e:
+    except KeyError:
         raise Exception(
             "No credentials for {} found in {}".format(database, filename))
 

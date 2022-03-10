@@ -1,9 +1,5 @@
-import abc
-import datetime
-from functools import singledispatch, singledispatchmethod
+from functools import singledispatchmethod
 import json
-import os
-import platform
 import random
 import time
 import traceback
@@ -32,11 +28,11 @@ class JobQueue:
     _data_table: str
 
     def __init__(self,
-        credentials: Dict[str, any],
-        queue: int = 0,
-        check_table=False,
-        drop_table=False,
-    ) -> None:
+                 credentials: Dict[str, any],
+                 queue: int = 0,
+                 check_table=False,
+                 drop_table=False,
+                 ) -> None:
         """ Interface to the jobsque database table
         database: str, name of the key in your .jobqueue.json file.
         queue: str, name of the queue you'd like to create or use.
@@ -56,6 +52,10 @@ class JobQueue:
         if check_table:
             self._create_tables(drop_table=drop_table)
 
+    @property
+    def queue_id(self) -> int:
+        return self._queue_id
+
     def clear(self) -> None:
         """ Clears all records for this queue.
         """
@@ -65,9 +65,9 @@ class JobQueue:
                 [self._queue_id])
 
     def pop(self,
-        n: Optional[int] = None,
-        worker_id: Optional[uuid.UUID] = None,
-    ) -> Union[List[Job], Optional[Job]]:
+            n: Optional[int] = None,
+            worker_id: Optional[uuid.UUID] = None,
+            ) -> Union[List[Job], Optional[Job]]:
         """ 
         Claims and returns up to the requested number of jobs.
         An optional worker id can be assigned. 
@@ -208,11 +208,11 @@ WHERE id = %s;""").format(
                 [error, job.id])
 
     def work_loop(self,
-        handler: Callable[[uuid.UUID, Job], None],
-        worker_id: Optional[uuid.UUID] = None,
-        wait_until_exit=15 * 60,
-        maximum_waiting_time=5 * 60,
-    ) -> None:
+                  handler: Callable[[uuid.UUID, Job], None],
+                  worker_id: Optional[uuid.UUID] = None,
+                  wait_until_exit=15 * 60,
+                  maximum_waiting_time=5 * 60,
+                  ) -> None:
         print(f"Job Queue: Starting...")
 
         worker_id = uuid.uuid4() if worker_id is None else worker_id

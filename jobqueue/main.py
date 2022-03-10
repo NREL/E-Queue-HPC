@@ -1,4 +1,3 @@
-from jobqueue.job_queue import JobQueue
 import os
 import sys
 import argparse
@@ -9,9 +8,8 @@ import jobqueue
 
 def get_args():
 
-    job_queue_name = None
     if os.path.exists(".default_queue_name"):
-        job_queue_name = open(".default_queue_name").read()
+        open(".default_queue_name").read()
         
     parser = argparse.ArgumentParser()
  
