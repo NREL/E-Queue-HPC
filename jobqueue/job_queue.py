@@ -221,7 +221,7 @@ WHERE id = %s;""").format(
         while True:
 
             # Pull job off the queue
-            job = self.pop(worker=worker_id)
+            job = self.pop(worker_id=worker_id)
 
             if job is None:
 
