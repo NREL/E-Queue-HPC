@@ -11,14 +11,14 @@ def generate_job():
 
 if __name__ == "__main__":
 
-    jq = jobqueue.JobQueue("test", 'test_queue')
-    jq.clear()
+    job_queue = jobqueue.JobQueue("test", 'test_queue')
+    job_queue.clear()
 
     for i in range(100):
         job = generate_job()
-        jq.add_job(job)
+        job_queue.add_job(job)
 
-    print(jq.messages)
+    print(job_queue.messages)
 
 
     
