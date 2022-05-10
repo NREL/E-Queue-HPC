@@ -213,7 +213,7 @@ WHERE id = %s;""").format(
                   wait_until_exit=15 * 60,
                   maximum_waiting_time=5 * 60,
                   ) -> None:
-        print(f"Job Queue: Starting...")
+        print(f"Job Queue: Starting...", flush=True)
 
         worker_id = uuid.uuid4() if worker_id is None else worker_id
         wait_start = None
@@ -232,11 +232,11 @@ WHERE id = %s;""").format(
                     waiting_time = time.time() - wait_start
                     if waiting_time > wait_until_exit:
                         print(
-                            "Job Queue: No Jobs, max waiting time exceeded. Exiting...")
+                            "Job Queue: No Jobs, max waiting time exceeded. Exiting...", flush=True)
                         break
 
                 # No jobs, wait and try again.
-                print("Job Queue: No jobs found. Waiting...")
+                print("Job Queue: No jobs found. Waiting...", flush=True)
 
                 # bounded randomized exponential backoff
                 wait_bound = min(maximum_waiting_time, wait_bound * 2)
@@ -246,23 +246,24 @@ WHERE id = %s;""").format(
             try:
                 wait_start = None
 
-                print(f"Job Queue: {job.id} running...")
+                print(f"Job Queue: {job.id} running...", flush=True)
 
                 handler(worker_id, job)  # handle the message
+
                 # Mark the job as complete in the self.
                 self.complete(job)
 
-                print(f"Job Queue: {job.id} done.")
+                print(f"Job Queue: {job.id} done.", flush=True)
             except Exception as e:
                 print(
-                    f"Job Queue: {job.id} unhandled exception {e} in work_loop.")
+                    f"Job Queue: {job.id} unhandled exception {e} in work_loop.", flush=True)
                 print(traceback.format_exc())
                 try:
                     self.fail(job, str(e))
                 except Exception as e2:
                     print(
-                        f"Job Queue: {job.id} exception thrown while marking as failed in work_loop: {e}, {e2}!")
-                    print(traceback.format_exc())
+                        f"Job Queue: {job.id} exception thrown while marking as failed in work_loop: {e}, {e2}!", flush=True)
+                    print(traceback.format_exc(), flush=True)
 
     @property
     def message_counts(self) -> Tuple[int, int, int, int]:
