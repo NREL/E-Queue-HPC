@@ -8,12 +8,18 @@ from jobqueue.connect import connect, release_pooled_connection
 
 class CursorManager:
 
-    def __init__(self, credentials: Dict[str, any], autocommit: bool = True):
+    def __init__(
+        self,
+        credentials: Dict[str, any],
+        autocommit: bool = True,
+        name: str = None,
+    ):
         self._credentials: Dict[str, any] = credentials
         self._autocommit: bool = autocommit
         self._connection = None
         self._pooling: bool = False
         self._cursor = None
+        self._name: str = name
 
     def __enter__(self) -> cursor:
         try:
@@ -21,7 +27,7 @@ class CursorManager:
             connection = connect(self._credentials)
             self._connection = connection
             connection.autocommit = self._autocommit
-            self._cursor = connection.cursor()
+            self._cursor = connection.cursor(self._name)
             return self._cursor
         except Exception as e:
             if not self.__exit__(*sys.exc_info()):
