@@ -1,8 +1,8 @@
-# JobQueue
+# E-Queue HPC
 
 A Task Queue for Coordinating Varied Tasks Across Multiple HPC Resources and HPC Jobs.
 
-The `JobQueue` is a module that connects to a Postgres database and allows users to send JSON objects as task descriptions to the database, which then will return these to individual resources when they request a task.  The software needs to know how to unpack the JSON and execute the correct job from the description.  
+The main interface is the `JobQueue` module that connects to a Postgres database and allows users to send JSON objects as task descriptions to the database, which then will return these to individual resources when they request a task.  The software needs to know how to unpack the JSON and execute the correct job from the description.  
 
 If the database is configured to be available from multiple clusters, then the compute nodes at these different clusters can all request tasks from the `JobQueue` and participate in the overall workflow.
 
