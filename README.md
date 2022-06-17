@@ -47,7 +47,9 @@ File location: `os.path.join(os.environ['HOME'], ".jobqueue.json")`
 
 ### JobQueue module
 
-The best interface is using the `JobQueue` module.  Please see the [test case](test/job_queue_test.py) for details on using this interface.  To run the test, type:
+Please see the [test case](test/job_queue_test.py) for details on using the `JobQueue` module.  To run the test, type:
 
         pytest -s -v 
+
+
 
