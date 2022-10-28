@@ -3,7 +3,7 @@ import json
 import random
 import time
 import traceback
-from typing import Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 import uuid
 
 import pandas as pd
@@ -21,14 +21,14 @@ psycopg2.extras.register_uuid()
 
 class JobQueue:
 
-    _credentials: Dict[str, any]
+    _credentials: Dict[str, Any]
     _queue_id: int
 
     _status_table: str
     _data_table: str
 
     def __init__(self,
-                 credentials: Dict[str, any],
+                 credentials: Dict[str, Any],
                  queue: int = 0,
                  check_table=False,
                  drop_table=False,
@@ -39,6 +39,7 @@ class JobQueue:
         _table_name is use for testing only.  To change your table name use the
         .jobqueue.json file.
         """
+
         credentials = credentials.copy()
         table_base_name = credentials['table_name']
         del credentials['table_name']
@@ -76,11 +77,20 @@ class JobQueue:
         be returned bare. If the pop fails in this case, None will be returned
         instead of an empty list.
         """
+        return self._pop(n, worker_id)
 
-        if n is None:
-            result = self.pop(n=1, worker_id=worker_id)
-            return None if len(result) == 0 else result[0]
+    @singledispatchmethod
+    def _pop(self, n: Optional[int], worker_id: Optional[uuid.UUID]
+             ) -> Union[List[Job], Optional[Job]]:
+        raise TypeError()
 
+    @_pop.register(type(None))
+    def _(self, n: None, worker_id: Optional[uuid.UUID]) -> Optional[Job]:
+        result = self._pop(1, worker_id)
+        return None if len(result) == 0 else result[0]  # type: ignore
+
+    @_pop.register(int)
+    def _(self, n: int, worker_id: Optional[uuid.UUID]) -> List[Job]:
         if n <= 0:
             return []
 
@@ -208,7 +218,7 @@ WHERE id = %s;""").format(
                 [error, job.id])
 
     def work_loop(self,
-                  handler: Callable[[uuid.UUID, Job], None],
+                  handler: Callable[[uuid.UUID, Job], bool],
                   worker_id: Optional[uuid.UUID] = None,
                   wait_until_exit=15 * 60,
                   maximum_waiting_time=5 * 60,
@@ -218,7 +228,8 @@ WHERE id = %s;""").format(
         worker_id = uuid.uuid4() if worker_id is None else worker_id
         wait_start = None
         wait_bound = 1.0
-        while True:
+        continue_working :bool = True
+        while continue_working:
 
             # Pull job off the queue
             job = self.pop(worker_id=worker_id)
@@ -243,12 +254,15 @@ WHERE id = %s;""").format(
                 time.sleep(random.uniform(1.0, wait_bound))
                 continue
 
+            if not isinstance(job, Job):
+                raise TypeError()  # should never happen
+
             try:
                 wait_start = None
 
                 print(f"Job Queue: {job.id} running...", flush=True)
 
-                handler(worker_id, job)  # handle the message
+                continue_working = handler(worker_id, job)  # handle the message
 
                 # Mark the job as complete in the self.
                 self.complete(job)
@@ -264,6 +278,7 @@ WHERE id = %s;""").format(
                     print(
                         f"Job Queue: {job.id} exception thrown while marking as failed in work_loop: {e}, {e2}!", flush=True)
                     print(traceback.format_exc(), flush=True)
+        print(f"Job Queue: exiting work_loop.", flush=True)
 
     @property
     def message_counts(self) -> Tuple[int, int, int, int]:
@@ -293,7 +308,7 @@ SELECT
             ),
                 [self._queue_id])
             records = cursor.fetchone()
-            return tuple(records)
+            return tuple(records)  # type: ignore
 
     def fail_incomplete_jobs(self, interval='12 hours') -> None:
         """ Mark all incomplete jobs in a given group started more than {interval} ago as failed.
@@ -428,8 +443,8 @@ WHERE
                 data_table=sql.Identifier(self._data_table))
 
             return pd.read_sql(
-                command,
-                params={'queue': self._queue_id},
+                command,  # type: ignore
+                params={'queue': self._queue_id},  # type: ignore
                 con=cursor.connection,
             )
 
@@ -447,4 +462,4 @@ SELECT COUNT(*) FROM {status_table}
                 queued_status=sql.Literal(JobStatus.Queued.value),
             ),
                 [self._queue_id])
-            return cursor.fetchone()
+            return cursor.fetchone()  # type: ignore

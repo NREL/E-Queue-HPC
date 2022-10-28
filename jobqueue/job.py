@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from functools import total_ordering
 from jobqueue.job_status import JobStatus
 
@@ -16,7 +16,7 @@ class Job:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     status: JobStatus = JobStatus.Queued
     priority: Optional[int] = field(default_factory=_make_priority)
-    command: any = None
+    command: Any = None
 
     error_count: int = 0
     error: Optional[str] = None
@@ -29,7 +29,9 @@ class Job:
         return self.id == other.id
 
     def __lt__(self, other):
-        return self.priority < other.priority
+        if self.priority != other.priority:
+            return self.priority < other.priority
+        return self.id < other.id
 
     def __hash__(self):
         return self.id.__hash__()

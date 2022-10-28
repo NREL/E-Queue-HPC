@@ -6,3 +6,4 @@ class JobStatus(IntEnum):
     Claimed = 1
     Complete = 2
     Failed = 3
+    Disabled = 4
