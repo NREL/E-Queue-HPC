@@ -273,7 +273,7 @@ WHERE id = %s;""").format(
                     f"Job Queue: {job.id} unhandled exception {e} in work_loop.", flush=True)
                 print(traceback.format_exc())
                 try:
-                    self.fail(job, str(e))
+                    self.fail(job, str(e) + '\n' + traceback.format_exc())
                 except Exception as e2:
                     print(
                         f"Job Queue: {job.id} exception thrown while marking as failed in work_loop: {e}, {e2}!", flush=True)
