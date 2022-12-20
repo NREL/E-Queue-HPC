@@ -7,7 +7,7 @@ import numpy
 
 import heapq
 
-from jobqueue.connect import load_credentials
+from jobqueue import load_credentials
 from jobqueue.job import Job
 from jobqueue.job_queue import JobQueue
 from jobqueue.job_status import JobStatus
