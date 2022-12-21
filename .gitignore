@@ -4,4 +4,4 @@ jobqueue.egg-info
 __pycache__
 env.sh
 /.envrc
-.vscode
+/.vscode
