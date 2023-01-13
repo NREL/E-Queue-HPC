@@ -5,7 +5,8 @@ dependencies:
 - pip
 - pip:
   - pytest
-  - psycopg2-binary
+  - psycopg >= 3
+  - psycopg_pool >= 3
   - pandas
   - connectorx
 
