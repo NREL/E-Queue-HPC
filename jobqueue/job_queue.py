@@ -100,7 +100,7 @@ class JobQueue:
         if n <= 0:
             return []
 
-        with CursorManager(self._credentials, binary=True) as cursor:
+        with CursorManager(self._credentials) as cursor:
             cursor.execute(
                 sql.SQL(
                     """
@@ -152,7 +152,7 @@ FROM p, {data_table} as t WHERE p.id = t.id;"""
     def push(self, jobs: Iterator[Job]) -> None:
         """Adds jobs to the queue."""
         # https://stackoverflow.com/questions/8134602/psycopg-insert-multiple-rows-with-one-query
-        with CursorManager(self._credentials, binary=True) as cursor:
+        with CursorManager(self._credentials) as cursor:
             # cursor, insert_query, data, template=None, page_size=100
             command = sql.SQL(
                 """
@@ -190,7 +190,7 @@ INSERT INTO {data_table} (id, command) (SELECT id, command FROM t);"""
         """While a job is being worked on, the worker can periodically let the queue know it is still working on the
         job (instead of crashed or frozen).
         """
-        with CursorManager(self._credentials, binary=True) as cursor:
+        with CursorManager(self._credentials) as cursor:
             cursor.execute(
                 sql.SQL(
                     """
@@ -203,7 +203,7 @@ WHERE id = %s;"""
 
     def complete(self, job: Job) -> None:
         """When a job is finished, this function will mark the status as done."""
-        with CursorManager(self._credentials, binary=True) as cursor:
+        with CursorManager(self._credentials) as cursor:
             cursor.execute(
                 sql.SQL(
                     """
@@ -220,7 +220,7 @@ WHERE id = %s;"""
 
     def fail(self, job: Job, error: Optional[str]) -> None:
         """When a job failed, this function will mark the status as failed."""
-        with CursorManager(self._credential, binary=True) as cursor:
+        with CursorManager(self._credential) as cursor:
             cursor.execute(
                 sql.SQL(
                     """
