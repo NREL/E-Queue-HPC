@@ -1,7 +1,7 @@
 import sys
 from typing import Any, Dict, Optional
 
-from psycopg import cursor
+import psycopg
 
 from jobqueue.connect import connect, release_pooled_connection
 
@@ -21,25 +21,20 @@ class CursorManager:
     def __init__(
         self,
         credentials: Dict[str, Any],  # database connection settings
-        autocommit: bool = True,
-        name: Optional[
-            str
-        ] = None,  # named managers use that name for the cursor generated
+        **kwargs
     ):
         self._credentials: Dict[str, Any] = credentials
-        self._autocommit: bool = autocommit
         self._connection = None
         self._pooling: bool = False
-        self._cursor: Optional[cursor] = None
-        self._name: Optional[str] = name
+        self._cursor: Optional[psycopg.Cursor] = None
+        self._connection_kwargs: Dict[str, Any] = kwargs
 
-    def __enter__(self) -> cursor:  # type: ignore
+    def __enter__(self) -> psycopg.Cursor:  # type: ignore
         try:
             self._pooling = self._credentials.get("pooling", False)
             connection = connect(self._credentials)
             self._connection = connection
-            connection.autocommit = self._autocommit
-            self._cursor = connection.cursor(self._name)
+            self._cursor = connection.cursor(**self._connection_kwargs)
             return self._cursor
         except Exception as e:
             if not self.__exit__(*sys.exc_info()):
@@ -49,7 +44,7 @@ class CursorManager:
         connection = self._connection
         self._connection = None
 
-        cursor_: Optional[cursor] = self._cursor
+        cursor_: Optional[psycopg.Cursor] = self._cursor
         self._cursor = None
 
         exception = exception_value
