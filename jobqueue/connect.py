@@ -81,12 +81,11 @@ def connect(credentials: Dict[str, Any], autocommit: bool = True) -> Any:
             wait_time = 0.0
             try:
                 inner_credentials = _extract_inner_credentials(credentials)
-                connection = psycopg.connect(
-                    " ".join(
-                        f"{key}={value}" for key, value in inner_credentials.items()
-                    ),
-                    autocommit=autocommit,
+                connection_string = " ".join(
+                    (f"{key}={value}" for key, value in inner_credentials.items())
                 )
+                connection = psycopg.connect(connection_string)
+                break
             except psycopg.OperationalError as e:
                 print(f"OperationalError while connecting to database: {e}", flush=True)
 
