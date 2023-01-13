@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 import psycopg
 
 from jobqueue.connect import connect, release_pooled_connection
+from jobqueue.connection_manager import ConnectionManager
 
 
 class CursorManager:
@@ -19,34 +20,29 @@ class CursorManager:
     """
 
     def __init__(
-        self,
-        credentials: Dict[str, Any],  # database connection settings
-        **kwargs
+        self, credentials: Dict[str, Any], **kwargs  # database connection settings
     ):
-        self._credentials: Dict[str, Any] = credentials
-        self._connection = None
-        self._pooling: bool = False
+        self._connection_manager: ConnectionManager = ConnectionManager(
+            credentials, **kwargs
+        )
+        self._kwargs: Dict[str, Any] = kwargs
         self._cursor: Optional[psycopg.Cursor] = None
-        self._connection_kwargs: Dict[str, Any] = kwargs
 
     def __enter__(self) -> psycopg.Cursor:  # type: ignore
         try:
-            self._pooling = self._credentials.get("pooling", False)
-            connection = connect(self._credentials)
-            self._connection = connection
-            self._cursor = connection.cursor(**self._connection_kwargs)
+            connection = self._connection_manager.__enter__()
+            self._cursor = connection.cursor(**self._kwargs)
             return self._cursor
         except Exception as e:
             if not self.__exit__(*sys.exc_info()):
                 raise e
 
-    def __exit__(self, exception_type, exception_value, traceback):
-        connection = self._connection
-        self._connection = None
-
-        cursor_: Optional[psycopg.Cursor] = self._cursor
-        self._cursor = None
-
+    def __exit__(
+        self,
+        exception_type,
+        exception_value,
+        traceback,
+    ) -> bool:
         exception = exception_value
 
         def do_and_capture(func):
@@ -57,18 +53,19 @@ class CursorManager:
                 if exception is None:
                     exception = e
 
-        if cursor_ is not None and not cursor_.closed:
-            do_and_capture(lambda: cursor_.close())
+        cursor = self._cursor
+        if cursor is not None and not cursor.closed:
+            do_and_capture(lambda: cursor.close())
 
-        if connection is not None:
-            if self._pooling:
-                do_and_capture(
-                    lambda: release_pooled_connection(self._credentials, connection)
-                )
-            else:
-                do_and_capture(lambda: connection.close())
+        do_and_capture(
+            lambda :
+            self._connection_manager.__exit__(
+                exception_type,
+                exception_value,
+                traceback,
+            )
+        )
 
         if exception is not None:
             raise exception
-
         return False

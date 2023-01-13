@@ -66,11 +66,11 @@ def release_pooled_connection(credentials: Dict[str, Any], connection: Any) -> N
     _get_pool(credentials).putconn(connection)
 
 
-def connect(credentials: Dict[str, Any]) -> Any:
+def connect(credentials: Dict[str, Any], autocommit: bool = True) -> Any:
     pooling = credentials.get("pooling", False)
     connection = None
     if pooling:
-        return acquire_pooled_connection(credentials)
+        connection = acquire_pooled_connection(credentials)
     else:
         initial_wait_max = credentials.get("initial_wait_max", 120)
         min_wait = credentials.get("min_wait", 0.5)
@@ -84,9 +84,9 @@ def connect(credentials: Dict[str, Any]) -> Any:
                 connection = psycopg.connect(
                     " ".join(
                         f"{key}={value}" for key, value in inner_credentials.items()
-                    )
+                    ),
+                    autocommit=autocommit,
                 )
-                return connection
             except psycopg.OperationalError as e:
                 print(f"OperationalError while connecting to database: {e}", flush=True)
 
@@ -97,6 +97,9 @@ def connect(credentials: Dict[str, Any]) -> Any:
                 if attempts >= max_attempts or wait_time >= max_wait:
                     raise e
                 time.sleep(sleep_time)
+
+    connection.autocommit = autocommit
+    return connection
 
 
 def _extract_inner_credentials(credentials: Dict[str, Any]) -> Dict[str, Any]:
