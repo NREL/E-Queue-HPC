@@ -31,14 +31,14 @@ File location: `os.path.join(os.environ['HOME'], ".jobqueue.json")`
             "project1": {
                 "host": "HOSTNAME",
                 "user": "project1ops",
-                "database": "project1",
+                "dbname": "project1",
                 "password": "*****************",
                 "table_name": "jobqueue"
             },
             "project2": {
                 "host": "HOSTNAME",
                 "user": "project2ops",
-                "database": "project2",
+                "dbname": "project2",
                 "password": "*****************",
                 "table_name": "jobqueue"
             },
