@@ -23,7 +23,7 @@ class CursorManager:
         self, credentials: Dict[str, Any], **kwargs  # database connection settings
     ):
         self._connection_manager: ConnectionManager = ConnectionManager(
-            credentials, **kwargs
+            credentials
         )
         self._kwargs: Dict[str, Any] = kwargs
         self._cursor: Optional[psycopg.Cursor] = None
