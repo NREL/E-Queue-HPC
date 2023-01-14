@@ -7,7 +7,7 @@ setup(
     install_requires=[
         "pytest",
         "pandas",
-        "psycopg>=3",
+        "psycopg[binary]>=3",
         "psycopg_pool>=3",
     ],  # list dependencies
     entry_points={
