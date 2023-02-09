@@ -2,10 +2,9 @@ name: jobqueue
 dependencies:
 - python>=3.7
 - pip
+- pandas
 - pip:
   - pytest
   - psycopg[binary] >= 3
   - psycopg_pool >= 3
-  - pandas
-  - connectorx
 
