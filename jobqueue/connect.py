@@ -72,7 +72,7 @@ def connect(credentials: Dict[str, Any], autocommit: bool = True) -> Any:
     if pooling:
         connection = acquire_pooled_connection(credentials)
     else:
-        initial_wait_max = credentials.get("initial_wait_max", 120)
+        initial_wait_max = credentials.get("initial_wait_max", 12)
         min_wait = credentials.get("min_wait", 0.5)
         max_wait = credentials.get("max_wait", 2 * 60 * 60)
         max_attempts = credentials.get("max_attempts", 10000)
