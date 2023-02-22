@@ -12,8 +12,8 @@ from psycopg import sql
 
 from jobqueue.job_status import JobStatus
 
-from .job import Job
-from .cursor_manager import CursorManager
+from jobqueue.job import Job
+from jobqueue.cursor_manager import CursorManager
 
 
 class JobQueue:
@@ -234,9 +234,9 @@ WHERE id = %s;""").format(
         while continue_working:
 
             # Pull job off the queue
-            job = self.pop(worker_id=worker_id)
+            _job = self.pop(worker_id=worker_id)
 
-            if job is None:
+            if _job is None:
 
                 if wait_start is None:
                     wait_start = time.time()
@@ -258,32 +258,32 @@ WHERE id = %s;""").format(
                 time.sleep(random.uniform(1.0, wait_bound))
                 continue
 
-            if not isinstance(job, Job):
+            if not isinstance(_job, Job):
                 raise TypeError()  # should never happen
 
             try:
                 wait_start = None
 
-                print(f"Job Queue: {job.id} running...", flush=True)
+                print(f"Job Queue: {_job.id} running...", flush=True)
 
                 continue_working = handler(worker_id,
-                                           job)  # handle the message
+                                           _job)  # handle the message
 
                 # Mark the job as complete in the self.
-                self.complete(job)
+                self.complete(_job)
 
-                print(f"Job Queue: {job.id} done.", flush=True)
+                print(f"Job Queue: {_job.id} done.", flush=True)
             except Exception as e:
                 print(
-                    f"Job Queue: {job.id} unhandled exception {e} in work_loop.",
+                    f"Job Queue: {_job.id} unhandled exception {e} in work_loop.",
                     flush=True,
                 )
                 print(traceback.format_exc())
                 try:
-                    self.fail(job, str(e) + "\n" + traceback.format_exc())
+                    self.fail(_job, str(e) + "\n" + traceback.format_exc())
                 except Exception as e2:
                     print(
-                        f"Job Queue: {job.id} exception thrown while marking as failed in work_loop: {e}, {e2}!",
+                        f"Job Queue: {_job.id} exception thrown while marking as failed in work_loop: {e}, {e2}!",
                         flush=True,
                     )
                     print(traceback.format_exc(), flush=True)
