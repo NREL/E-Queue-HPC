@@ -1,10 +1,11 @@
 from functools import singledispatchmethod
-from itertools import chain
+from itertools import chain, islice
 import json
+import math
 import random
 import time
 import traceback
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 import uuid
 
 import pandas as pd
@@ -130,7 +131,8 @@ FROM p, {data_table} as t WHERE p.id = t.id;""").format(
                     "n": n,
                 },
             )
-            result = [
+
+            return  [
                 Job(
                     id=r[0],
                     status=JobStatus.Claimed,
@@ -138,35 +140,48 @@ FROM p, {data_table} as t WHERE p.id = t.id;""").format(
                     command=r[2],
                 ) for r in cursor.fetchall()
             ]
-        return result
 
     @singledispatchmethod
-    def push(self, jobs: Iterator[Job]) -> None:
+    def push(self, jobs: Sequence[Job]) -> None:
         """Adds jobs to the queue."""
         # https://stackoverflow.com/questions/8134602/psycopg-insert-multiple-rows-with-one-query
+        
+        if len(jobs) <= 0:
+            return
+        
+        block_size = 65535 // 3
+        
+        i = 0
         with CursorManager(self._credentials, binary=True) as cursor:
-            # cursor, insert_query, data, template=None, page_size=100
-            command = sql.SQL("""
-WITH t AS (
-SELECT 
-    id::uuid,
-    priority::int,
-    command::jsonb
-    FROM (VALUES {values_placeholders}) AS t (id, priority, command)),
-v AS (INSERT INTO {status_table} (id, queue, priority) (SELECT id, {queue}, priority FROM t))
-INSERT INTO {data_table} (id, command) (SELECT id, command FROM t);""").format(
-                queue=sql.Literal(self._queue_id),
-                status_table=sql.Identifier(self._status_table),
-                data_table=sql.Identifier(self._data_table),
-                values_placeholders=sql.SQL(',').join(
-                    (sql.SQL('(%b,%b,%b)') for j in jobs)))
-            cursor.execute(
-                command,
-                list(
-                    chain(*((j.id, j.priority,
-                             json.dumps(j.command, separators=(",", ":")))
-                            for j in jobs))),
-                binary=True)
+            with cursor.connection.transaction():
+                while i < len(jobs):
+                    chunk = jobs[i:i+block_size]
+
+                    # cursor, insert_query, data, template=None, page_size=100
+                    command = sql.SQL("""
+    WITH t AS (
+    SELECT 
+        id::uuid,
+        priority::int,
+        command::jsonb
+        FROM (VALUES {values_placeholders}) AS t (id, priority, command)),
+    v AS (INSERT INTO {status_table} (id, queue, priority) (SELECT id, {queue}, priority FROM t))
+    INSERT INTO {data_table} (id, command) (SELECT id, command FROM t);""").format(
+                        queue=sql.Literal(self._queue_id),
+                        status_table=sql.Identifier(self._status_table),
+                        data_table=sql.Identifier(self._data_table),
+                        values_placeholders=sql.SQL(',').join(
+                            (sql.SQL('(%b,%b,%b)') for j in chunk)))
+                    
+                    cursor.execute(
+                        command,
+                        list(
+                            chain(*((j.id, j.priority,
+                                    json.dumps(j.command, separators=(",", ":")))
+                                    for j in chunk))),
+                        binary=True)
+                    
+                    i += block_size
 
     @push.register(Job)
     def _(self, job: Job) -> None:
