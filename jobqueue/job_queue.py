@@ -161,22 +161,23 @@ FROM p, {data_table} as t WHERE p.id = t.id;""").format(
                     command = sql.SQL("""
     WITH t AS (
     SELECT 
-        id::uuid,
         priority::int,
+        id::uuid,
+        parent::uuid,
         command::jsonb
-        FROM (VALUES {values_placeholders}) AS t (id, priority, command)),
-    v AS (INSERT INTO {status_table} (id, queue, priority) (SELECT id, {queue}, priority FROM t))
+        FROM (VALUES {values_placeholders}) AS t (id, priority, parent, command)),
+    v AS (INSERT INTO {status_table} (queue, priority, id, parent) (SELECT {queue}, priority, id, parent FROM t))
     INSERT INTO {data_table} (id, command) (SELECT id, command FROM t);""").format(
                         queue=sql.Literal(self._queue_id),
                         status_table=sql.Identifier(self._status_table),
                         data_table=sql.Identifier(self._data_table),
                         values_placeholders=sql.SQL(',').join(
-                            (sql.SQL('(%b,%b,%b)') for j in chunk)))
+                            (sql.SQL('(%b,%b,%b,%b)') for j in chunk)))
                     
                     cursor.execute(
                         command,
                         list(
-                            chain(*((j.id, j.priority,
+                            chain(*((j.priority, j.id, j.parent,
                                     json.dumps(j.command, separators=(",", ":")))
                                     for j in chunk))),
                         binary=True)
@@ -416,6 +417,7 @@ CREATE TABLE IF NOT EXISTS {status_table} (
     status        smallint NOT NULL DEFAULT {queued_status},
     priority      int NOT NULL,
     id            uuid NOT NULL PRIMARY KEY,
+    parent        uuid,
     start_time    timestamp,
     update_time   timestamp,
     worker        uuid,
@@ -427,13 +429,15 @@ CREATE INDEX IF NOT EXISTS {priority_index} ON {status_table} (queue, priority) 
 
 CREATE INDEX IF NOT EXISTS {update_index} ON {status_table} (queue, status, update_time) WHERE status > {queued_status};
 
+CREATE INDEX IF NOT EXISTS {parent_index} ON {status_table} (parent, id) WHERE parent IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS {data_table} (
     id            uuid NOT NULL PRIMARY KEY,
-    command       jsonb NOT NULL,
-    parent        uuid
+    command       jsonb NOT NULL
+    
 );
 
-CREATE INDEX IF NOT EXISTS {parent_index} ON {data_table} (parent, id) WHERE parent IS NOT NULL;
+
 """).format(
                         status_table=sql.Identifier(self._status_table),
                         data_table=sql.Identifier(self._data_table),
@@ -455,12 +459,12 @@ SELECT
     s.status as status,
     s.priority as priority,
     s.id as id,
+    s.parent as parent,
     s.start_time as start_time,
     s.update_time as update_time,
     s.worker as worker,
     s.error_count as error_count,
     s.error as error,
-    d.parent as parent,
     d.command as command
 FROM 
     {status_table} AS s,

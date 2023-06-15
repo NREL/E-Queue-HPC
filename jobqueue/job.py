@@ -14,6 +14,7 @@ def _make_priority():
 @dataclass
 class Job:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
+    parent: Optional[uuid.UUID] = None
     status: JobStatus = JobStatus.Queued
     priority: Optional[int] = field(default_factory=_make_priority)
     command: Any = None
