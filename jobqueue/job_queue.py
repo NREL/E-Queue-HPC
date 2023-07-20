@@ -1,11 +1,23 @@
 from functools import singledispatchmethod
 from itertools import chain, islice
+from psycopg.types.json import Jsonb
 import json
 import math
 import random
 import time
 import traceback
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 import uuid
 
 import pandas as pd
@@ -18,7 +30,6 @@ from jobqueue.cursor_manager import CursorManager
 
 
 class JobQueue:
-
     _credentials: Dict[str, Any]
     _queue_id: int
 
@@ -61,7 +72,8 @@ class JobQueue:
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
                 sql.SQL("DELETE FROM {status_table} WHERE queue = %s;").format(
-                    status_table=sql.Identifier(self._status_table)),
+                    status_table=sql.Identifier(self._status_table)
+                ),
                 [self._queue_id],
             )
 
@@ -82,8 +94,8 @@ class JobQueue:
 
     @singledispatchmethod
     def _pop(
-            self, n: Optional[int],
-            worker_id: Optional[uuid.UUID]) -> Union[List[Job], Optional[Job]]:
+        self, n: Optional[int], worker_id: Optional[uuid.UUID]
+    ) -> Union[List[Job], Optional[Job]]:
         raise TypeError()
 
     @_pop.register(type(None))
@@ -98,28 +110,30 @@ class JobQueue:
 
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
+                sql.SQL(
+                    """
 WITH p AS (
 SELECT id, priority FROM {status_table}
-    WHERE 
+    WHERE
         queue = %(queue)s AND
         status = {queued_status}
     ORDER BY priority ASC
     LIMIT %(n)s FOR UPDATE SKIP LOCKED),
 u AS (
 UPDATE {status_table} as q
-    SET 
+    SET
         status = {claimed_status},
         worker = %(worker_id)s,
         start_time = NOW(),
         update_time = NOW()
     FROM p
     WHERE p.id = q.id)
-SELECT 
-    p.id AS id, 
+SELECT
+    p.id AS id,
     p.priority AS priority,
     t.command AS command
-FROM p, {data_table} as t WHERE p.id = t.id;""").format(
+FROM p, {data_table} as t WHERE p.id = t.id;"""
+                ).format(
                     status_table=sql.Identifier(self._status_table),
                     data_table=sql.Identifier(self._data_table),
                     queued_status=sql.Literal(JobStatus.Queued.value),
@@ -132,85 +146,132 @@ FROM p, {data_table} as t WHERE p.id = t.id;""").format(
                 },
             )
 
-            return  [
+            return [
                 Job(
                     id=r[0],
                     status=JobStatus.Claimed,
                     priority=r[1],
                     command=r[2],
-                ) for r in cursor.fetchall()
+                )
+                for r in cursor.fetchall()
             ]
 
     @singledispatchmethod
     def push(self, jobs: Sequence[Job]) -> None:
         """Adds jobs to the queue."""
         # https://stackoverflow.com/questions/8134602/psycopg-insert-multiple-rows-with-one-query
-        
+
         if len(jobs) <= 0:
             return
-        
+
         block_size = 65535 // 3
-        
+
         i = 0
         with CursorManager(self._credentials, binary=True) as cursor:
             with cursor.connection.transaction():
                 while i < len(jobs):
-                    chunk = jobs[i:i+block_size]
+                    chunk = jobs[i : i + block_size]
 
                     # cursor, insert_query, data, template=None, page_size=100
-                    command = sql.SQL("""
+                    command = sql.SQL(
+                        """
     WITH t AS (
-    SELECT 
+    SELECT
         priority::int,
         id::uuid,
         parent::uuid,
         command::jsonb
         FROM (VALUES {values_placeholders}) AS t (id, priority, parent, command)),
     v AS (INSERT INTO {status_table} (queue, priority, id, parent) (SELECT {queue}, priority, id, parent FROM t))
-    INSERT INTO {data_table} (id, command) (SELECT id, command FROM t);""").format(
+    INSERT INTO {data_table} (id, command) (SELECT id, command FROM t);"""
+                    ).format(
                         queue=sql.Literal(self._queue_id),
                         status_table=sql.Identifier(self._status_table),
                         data_table=sql.Identifier(self._data_table),
-                        values_placeholders=sql.SQL(',').join(
-                            (sql.SQL('(%b,%b,%b,%b)') for j in chunk)))
-                    
+                        values_placeholders=sql.SQL(",").join(
+                            (sql.SQL("(%b,%b,%b,%b)") for j in chunk)
+                        ),
+                    )
+
                     cursor.execute(
                         command,
                         list(
-                            chain(*((j.priority, j.id, j.parent,
-                                    json.dumps(j.command, separators=(",", ":")))
-                                    for j in chunk))),
-                        binary=True)
-                    
+                            chain(
+                                *(
+                                    (
+                                        j.priority,
+                                        j.id,
+                                        j.parent,
+                                        json.dumps(j.command, separators=(",", ":")),
+                                    )
+                                    for j in chunk
+                                )
+                            )
+                        ),
+                        binary=True,
+                    )
+
                     i += block_size
 
     @push.register(Job)
     def _(self, job: Job) -> None:
         """Adds a job to the queue."""
-        self.push((job, ))
+        self.push((job,))
 
     def update(self, job: Job) -> None:
-        """While a job is being worked on, the worker can periodically let the queue know it is still working on the
+        """While a job is in progress, the worker can periodically let the queue know it is still working on the
         job (instead of crashed or frozen).
         """
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
+                sql.SQL(
+                    """
 UPDATE {status_table}
 SET update_time = NOW()
-WHERE id = %s;""").format(status_table=sql.Identifier(self._status_table)),
+WHERE id = %s;"""
+                ).format(status_table=sql.Identifier(self._status_table)),
                 [job.id],
+            )
+
+    def update_job_command(self, job: Job) -> None:
+        with CursorManager(self._credentials) as cursor:
+            cursor.execute(
+                sql.SQL(
+                    """
+WITH status_update AS (
+    UPDATE {status_table}
+    SET update_time = NOW(),
+        status = %b,
+        priority = %b
+    WHERE id = {id}
+)
+UPDATE {data_table}
+    SET command = %b
+    WHERE id = {id}
+                        ;"""
+                ).format(
+                    status_table=sql.Identifier(self._status_table),
+                    id=sql.Literal(job.id),
+                    data_table=sql.Identifier(self._data_table),
+                ),
+                [
+                    job.status,
+                    job.priority,
+                    Jsonb(job.command),
+                ],
             )
 
     def complete(self, job: Job) -> None:
         """When a job is finished, this function will mark the status as done."""
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
+                sql.SQL(
+                    """
 UPDATE {status_table}
 SET status = {complete_status},
     update_time = NOW()
-WHERE id = %s;""").format(
+WHERE id = %s;"""
+                ).format(
                     status_table=sql.Identifier(self._status_table),
                     complete_status=sql.Literal(JobStatus.Complete.value),
                 ),
@@ -221,13 +282,15 @@ WHERE id = %s;""").format(
         """When a job failed, this function will mark the status as failed."""
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
+                sql.SQL(
+                    """
 UPDATE {status_table}
 SET status = {failed_status},
     update_time = NOW(),
     error = %s,
     error_count = COALESCE(error_count, 0) + 1
-WHERE id = %s;""").format(
+WHERE id = %s;"""
+                ).format(
                     status_table=sql.Identifier(self._status_table),
                     failed_status=sql.Literal(JobStatus.Failed.value),
                 ),
@@ -248,12 +311,10 @@ WHERE id = %s;""").format(
         wait_bound = 1.0
         continue_working: bool = True
         while continue_working:
-
             # Pull job off the queue
             _job = self.pop(worker_id=worker_id)
 
             if _job is None:
-
                 if wait_start is None:
                     wait_start = time.time()
                     wait_bound = 1
@@ -282,10 +343,9 @@ WHERE id = %s;""").format(
 
                 print(f"Job Queue: {_job.id} running...", flush=True)
 
-                continue_working = handler(worker_id,
-                                           _job)  # handle the message
+                continue_working = handler(worker_id, _job)  # handle the message
 
-                # Mark the job as complete in the self.
+                # Mark the job as complete in the queue.
                 self.complete(_job)
 
                 print(f"Job Queue: {_job.id} done.", flush=True)
@@ -312,20 +372,22 @@ WHERE id = %s;""").format(
         """
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
-SELECT 
-    (SELECT COUNT(*) FROM {status_table} 
+                sql.SQL(
+                    """
+SELECT
+    (SELECT COUNT(*) FROM {status_table}
         WHERE queue = %s AND
             status = {queued_status}) AS open,
-    (SELECT COUNT(*) FROM {status_table} 
+    (SELECT COUNT(*) FROM {status_table}
         WHERE queue = %s AND
             status = {claimed_status}) AS running,
-    (SELECT COUNT(*) FROM {status_table} 
+    (SELECT COUNT(*) FROM {status_table}
         WHERE queue = %s AND
             status = {complete_status}) AS done,
-    (SELECT COUNT(*) FROM {status_table} 
+    (SELECT COUNT(*) FROM {status_table}
         WHERE queue = %s AND
-            status = {failed_status}) AS failed;""").format(
+            status = {failed_status}) AS failed;"""
+                ).format(
                     status_table=sql.Identifier(self._status_table),
                     queued_status=sql.Literal(JobStatus.Queued.value),
                     claimed_status=sql.Literal(JobStatus.Claimed.value),
@@ -341,12 +403,14 @@ SELECT
         """Mark all incomplete jobs in a given group started more than {interval} ago as failed."""
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
+                sql.SQL(
+                    """
 UPDATE {status_table}
     SET update_time = NOW()
     WHERE queue = %s
         AND status = {claimed_status}
-        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;""").format(
+        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;"""
+                ).format(
                     status_table=sql.Identifier(self._status_table),
                     claimed_status=sql.Literal(JobStatus.Claimed.value),
                 ),
@@ -358,17 +422,19 @@ UPDATE {status_table}
 
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
+                sql.SQL(
+                    """
 UPDATE {status_table}
-    SET 
+    SET
         status = {queued_status},
-        start_time = NULL, 
-        update_time = NULL, 
+        start_time = NULL,
+        update_time = NULL,
         error = NULL,
         error_count = COALESCE(error_count, 0) + 1
     WHERE queue = %s
         AND status = {claimed_status}
-        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;""").format(
+        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;"""
+                ).format(
                     status_table=sql.Identifier(self._status_table),
                     queued_status=sql.Literal(JobStatus.Queued.value),
                     claimed_status=sql.Literal(JobStatus.Claimed.value),
@@ -380,16 +446,18 @@ UPDATE {status_table}
         """Mark all failed jobs in a given group started more than {interval} ago as open."""
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
+                sql.SQL(
+                    """
 UPDATE {status_table}
     SET status = {queued_status},
-        start_time = NULL, 
-        update_time = NULL, 
-        end_time = NULL, 
+        start_time = NULL,
+        update_time = NULL,
+        end_time = NULL,
         error = NULL
     WHERE queue = %s
         AND status = {failed_status}
-        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;""").format(
+        AND update_time < CURRENT_TIMESTAMP - INTERVAL %s;"""
+                ).format(
                     status_table=sql.Identifier(self._status_table),
                     queued_status=sql.Literal(JobStatus.Queued.value),
                     failed_status=sql.Literal(JobStatus.Failed.value),
@@ -403,15 +471,19 @@ UPDATE {status_table}
             with cursor.connection.transaction():
                 if drop_table:
                     cursor.execute(
-                        sql.SQL("""
+                        sql.SQL(
+                            """
 DROP TABLE IF EXISTS {status_table};
-DROP TABLE IF EXISTS {data_table};""").format(
+DROP TABLE IF EXISTS {data_table};"""
+                        ).format(
                             status_table=sql.Identifier(self._status_table),
                             data_table=sql.Identifier(self._data_table),
-                        ))
+                        )
+                    )
 
                 cursor.execute(
-                    sql.SQL("""
+                    sql.SQL(
+                        """
 CREATE TABLE IF NOT EXISTS {status_table} (
     queue         smallint NOT NULL,
     status        smallint NOT NULL DEFAULT {queued_status},
@@ -434,27 +506,29 @@ CREATE INDEX IF NOT EXISTS {parent_index} ON {status_table} (parent, id) WHERE p
 CREATE TABLE IF NOT EXISTS {data_table} (
     id            uuid NOT NULL PRIMARY KEY,
     command       jsonb NOT NULL
-    
+
 );
 
 
-""").format(
+"""
+                    ).format(
                         status_table=sql.Identifier(self._status_table),
                         data_table=sql.Identifier(self._data_table),
-                        priority_index=sql.Identifier(self._status_table +
-                                                      "_priority_idx"),
-                        update_index=sql.Identifier(self._status_table +
-                                                    "_update_idx"),
-                        parent_index=sql.Identifier(self._data_table +
-                                                    "_parent_idx"),
+                        priority_index=sql.Identifier(
+                            self._status_table + "_priority_idx"
+                        ),
+                        update_index=sql.Identifier(self._status_table + "_update_idx"),
+                        parent_index=sql.Identifier(self._data_table + "_parent_idx"),
                         queued_status=sql.Literal(JobStatus.Queued.value),
-                    ))
+                    )
+                )
 
     def get_jobs_as_dataframe(self) -> pd.DataFrame:
         """Returns all queues as a dataframe."""
         with CursorManager(self._credentials) as cursor:
-            command = sql.SQL("""
-SELECT 
+            command = sql.SQL(
+                """
+SELECT
     s.queue as queue,
     s.status as status,
     s.priority as priority,
@@ -466,12 +540,13 @@ SELECT
     s.error_count as error_count,
     s.error as error,
     d.command as command
-FROM 
+FROM
     {status_table} AS s,
     {data_table} AS d
 WHERE
     s.id = d.id AND
-    queue = %(queue)s;""").format(
+    queue = %(queue)s;"""
+            ).format(
                 status_table=sql.Identifier(self._status_table),
                 data_table=sql.Identifier(self._data_table),
             )
@@ -488,11 +563,13 @@ WHERE
         """
         with CursorManager(self._credentials) as cursor:
             cursor.execute(
-                sql.SQL("""
-SELECT COUNT(*) FROM {status_table} 
-    WHERE 
+                sql.SQL(
+                    """
+SELECT COUNT(*) FROM {status_table}
+    WHERE
         queue = %s AND
-        status = {queued_status};""").format(
+        status = {queued_status};"""
+                ).format(
                     status_table=sql.Identifier(self._status_table),
                     queued_status=sql.Literal(JobStatus.Queued.value),
                 ),
