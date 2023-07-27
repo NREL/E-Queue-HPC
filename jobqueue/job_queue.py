@@ -177,8 +177,8 @@ FROM p, {data_table} as t WHERE p.id = t.id;"""
                         """
     WITH t AS (
     SELECT
-        priority::int,
         id::uuid,
+        priority::int,
         parent::uuid,
         command::jsonb
         FROM (VALUES {values_placeholders}) AS t (id, priority, parent, command)),
@@ -199,8 +199,8 @@ FROM p, {data_table} as t WHERE p.id = t.id;"""
                             chain(
                                 *(
                                     (
-                                        j.priority,
                                         j.id,
+                                        j.priority,
                                         j.parent,
                                         json.dumps(j.command, separators=(",", ":")),
                                     )
