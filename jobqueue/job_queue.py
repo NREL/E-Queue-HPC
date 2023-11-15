@@ -164,7 +164,7 @@ FROM p, {data_table} as t WHERE p.id = t.id;"""
         if len(jobs) <= 0:
             return
 
-        block_size = 65535 // 3
+        block_size = 65500 // 4
 
         i = 0
         with CursorManager(self._credentials, binary=True) as cursor:
