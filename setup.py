@@ -1,9 +1,10 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 setup(
     name="jobqueue",
     version="0.0.1",
+    packages=find_packages(include=["jobqueue"]),
     install_requires=[
         "pytest",
         "pandas",
