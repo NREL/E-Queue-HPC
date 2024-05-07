@@ -102,4 +102,8 @@ def connect(credentials: Dict[str, Any], autocommit: bool = True) -> Any:
 
 
 def _extract_inner_credentials(credentials: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: credentials[k] for k in ("host", "dbname", "user", "password")}
+    return {
+        k: credentials[k]
+        for k in ("host", "port", "dbname", "user", "password")
+        if k in credentials
+    }
