@@ -1,3 +1,17 @@
 [build-system]
-requires = ["setuptools>=60"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobqueue"
+version = "0.1.0"
+description = "A database backed job queue implementation."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE.md"}
+dependencies = [
+    "pandas",
+    "pytest",
+    "psycopg >= 3",
+    "psycopg_pool >= 3"
+]
